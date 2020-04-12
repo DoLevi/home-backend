@@ -6,6 +6,7 @@ public class DatabaseQueries {
             "FROM purchase_mapping pm " +
             "JOIN purchases p ON pm.purchase_id = p.id " +
             "JOIN users u ON pm.user_id = u.id";
+    public static final String SQL_VERIFY_USER = "SELECT 1 FROM users WHERE username = ?";
     public static final String SQL_GET_ALL_USERS = "SELECT username FROM users";
     public static final String SQL_GET_PURCHASES = "SELECT p.date_bought, p.product_name, p.price * m.consumption_share / s.share_sum AS price " +
             "FROM purchases p " +

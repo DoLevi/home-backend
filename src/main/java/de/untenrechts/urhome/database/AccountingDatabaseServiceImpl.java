@@ -51,63 +51,63 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
 
     @Override
     public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonArray>> resultHandler) {
-        jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
-            if (asyncFetch.succeeded()) {
-                final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
-                        .map(PurchaseBuilder::buildLightPurchase)
-                        .collect(Collectors.toList()));
-                log.debug("Fetching purchases for username {} from database has succeeded", username);
+        verifyUser(username).onComplete(asyncVerification -> {
+            if (asyncVerification.succeeded() && asyncVerification.result()) {
+                jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
+                    if (asyncFetch.succeeded()) {
+                        final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
+                                .map(PurchaseBuilder::buildLightPurchase)
+                                .collect(Collectors.toList()));
+                        log.debug("Fetching purchases for username {} from database has succeeded", username);
 
-                resultHandler.handle(Future.succeededFuture(result));
+                        resultHandler.handle(Future.succeededFuture(result));
+                    } else {
+                        log.error("Fetching purchases for username {} from database has failed.",
+                                username, asyncFetch.cause());
+                        resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
+                    }
+                });
+            } else if (!asyncVerification.result()) {
+                log.warn("Fetching purchases for unknown username {} from database has failed.",
+                        username);
+                resultHandler.handle(Future.succeededFuture());
             } else {
                 log.error("Fetching purchases for username {} from database has failed.",
-                        username, asyncFetch.cause());
-                resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
+                        username, asyncVerification.cause());
+                resultHandler.handle(Future.failedFuture(asyncVerification.cause()));
             }
         });
-        fetchPurchasesByUsername(username).onComplete(resultHandler);
         return this;
     }
 
     @Override
     public AccountingDatabaseService fetchPurchase(final long id, Handler<AsyncResult<JsonObject>> resultHandler) {
-        fetchPurchaseById(id).onComplete(asyncPurchase -> {
-            if (asyncPurchase.succeeded() && asyncPurchase.result() != null) {
-                final JsonObject result = PurchaseBuilder.buildFullPurchase(asyncPurchase.result());
-                resultHandler.handle(Future.succeededFuture(result));
-            } else if (asyncPurchase.result() == null) {
-                resultHandler.handle(Future.succeededFuture(null));
+        jdbcClient.querySingleWithParams(SQL_GET_PURCHASE, new JsonArray().add(id).add(id), asyncFetch -> {
+            if (asyncFetch.succeeded()) {
+                log.debug("Fetching purchase for id {} from database has succeeded", id);
+                if (asyncFetch.result() != null) {
+                    final JsonObject result = PurchaseBuilder.buildFullPurchase(asyncFetch.result());
+                    resultHandler.handle(Future.succeededFuture(result));
+                } else {
+                    log.warn("Fetching purchase for id {} from database has resulted in an empty response",
+                            id);
+                    resultHandler.handle(Future.succeededFuture());
+                }
             } else {
-                resultHandler.handle(Future.failedFuture(asyncPurchase.cause()));
+                log.error("Fetching purchase for id {} from database has failed.", id,
+                        asyncFetch.cause());
+                resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
             }
         });
         return this;
     }
 
-    private Future<JsonArray> fetchPurchasesByUsername(final String username) {
-        Promise<JsonArray> promise = Promise.promise();
-        jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
+    private Future<Boolean> verifyUser(final String username) {
+        Promise<Boolean> promise = Promise.promise();
+        jdbcClient.querySingleWithParams(SQL_VERIFY_USER, new JsonArray().add(username), asyncFetch -> {
             if (asyncFetch.succeeded()) {
-                log.debug("Fetching purchases for username {} from database has succeeded", username);
-                promise.complete(new JsonArray(asyncFetch.result().getResults()));
+                promise.complete(asyncFetch.result() != null);
             } else {
-                log.error("Fetching purchases for username {} from database has failed.",
-                        username, asyncFetch.cause());
-                promise.fail(asyncFetch.cause());
-            }
-        });
-        return promise.future();
-    }
-
-    private Future<JsonArray> fetchPurchaseById(final long id) {
-        Promise<JsonArray> promise = Promise.promise();
-        jdbcClient.querySingleWithParams(SQL_GET_PURCHASE, new JsonArray().add(id).add(id), asyncFetch -> {
-            if (asyncFetch.succeeded()) {
-                log.debug("Fetching purchase for id {} from database has succeeded", id);
-                promise.complete(asyncFetch.result());
-            } else {
-                log.error("Fetching purchase for id {} from database has failed.", id,
-                        asyncFetch.cause());
                 promise.fail(asyncFetch.cause());
             }
         });

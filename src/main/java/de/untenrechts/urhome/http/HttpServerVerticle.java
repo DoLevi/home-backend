@@ -4,12 +4,11 @@ import de.untenrechts.urhome.database.AccountingDatabaseService;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Promise;
 import io.vertx.core.http.HttpServer;
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import lombok.extern.slf4j.Slf4j;
-
-import java.util.Map;
 
 import static de.untenrechts.urhome.MainVerticle.URHOME_DB_QUEUE;
 
@@ -60,9 +59,16 @@ public class HttpServerVerticle extends AbstractVerticle {
         final String username = ctx.request().getParam("username");
         accountingDbService.fetchPurchasesForUser(username, asyncReply -> {
             if (asyncReply.succeeded()) {
-                ctx.response()
-                        .putHeader("Content-Type", "application/json")
-                        .end(asyncReply.result().toBuffer());
+                final JsonArray result = asyncReply.result();
+                if (result!= null) {
+                    ctx.response()
+                            .putHeader("Content-Type", "application/json")
+                            .end(asyncReply.result().toBuffer());
+                } else {
+                    ctx.response()
+                            .setStatusCode(404)
+                            .end();
+                }
             } else {
                 ctx.fail(asyncReply.cause());
             }
@@ -77,7 +83,7 @@ public class HttpServerVerticle extends AbstractVerticle {
                 if (result != null) {
                     ctx.response()
                             .putHeader("Content-Type", "application/json")
-                            .end(asyncReply.result().toBuffer());
+                            .end(result.toBuffer());
                 } else {
                     ctx.response()
                             .setStatusCode(404)
