@@ -8,6 +8,8 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.api.validation.HTTPRequestValidationHandler;
+import io.vertx.ext.web.api.validation.ParameterType;
 import lombok.extern.slf4j.Slf4j;
 
 import static de.untenrechts.urhome.MainVerticle.URHOME_DB_QUEUE;
@@ -26,8 +28,12 @@ public class HttpServerVerticle extends AbstractVerticle {
 
         Router router = Router.router(vertx);
         router.get("/user/all").handler(this::fetchAllUsersHandler);
-        router.get("/purchase/:id").handler(this::fetchPurchaseHandler);
-        router.get("/purchase/all/:username").handler(this::fetchPurchaseByUsernameHandler);
+        router.get("/purchase/:id")
+                .handler(HttpServerVerticle.getPurchaseValidationHandler())
+                .handler(this::fetchPurchaseHandler);
+        router.get("/purchase/all/:username")
+                .handler(HttpServerVerticle.getPurchasesForUsernameValidationHandler())
+                .handler(this::fetchPurchaseByUsernameHandler);
 
         HttpServer server = vertx.createHttpServer();
         server.requestHandler(router)
@@ -93,5 +99,15 @@ public class HttpServerVerticle extends AbstractVerticle {
                 ctx.fail(asyncReply.cause());
             }
         });
+    }
+
+    private static HTTPRequestValidationHandler getPurchaseValidationHandler() {
+        return HTTPRequestValidationHandler.create()
+                .addPathParam("id", ParameterType.INT);
+    }
+
+    private static HTTPRequestValidationHandler getPurchasesForUsernameValidationHandler() {
+        return HTTPRequestValidationHandler.create()
+                .addPathParam("username", ParameterType.GENERIC_STRING);
     }
 }
