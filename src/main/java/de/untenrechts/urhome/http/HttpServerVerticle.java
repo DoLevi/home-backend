@@ -28,6 +28,7 @@ public class HttpServerVerticle extends AbstractVerticle {
         Router router = Router.router(vertx);
         router.get("/user/all").handler(this::fetchAllUsersHandler);
         router.get("/purchase/:id").handler(this::fetchPurchaseHandler);
+        router.get("/purchase/all/:username").handler(this::fetchPurchaseByUsernameHandler);
 
         HttpServer server = vertx.createHttpServer();
         server.requestHandler(router)
