@@ -12,9 +12,9 @@ public class DatabaseConfig {
     public static final String USER_KEY = "user";
     public static final String PASSWORD_KEY = "password";
 
-    private final String jdbcUrl;
-    private final String driverClass;
-    private final String user;
-    private final String password;
+    private String jdbcUrl;
+    private String driverClass;
+    private String user;
+    private String password;
 
 }

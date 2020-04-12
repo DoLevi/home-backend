@@ -1,6 +1,0 @@
-{
-  "jdbcUrl": "jdbc:postgresql://localhost:5432/dev_untenrechts_home",
-  "driverClass": "org.postgresql.Driver",
-  "user": "urhome",
-  "password": "urhome"
-}
