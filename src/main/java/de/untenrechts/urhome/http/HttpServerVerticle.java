@@ -55,8 +55,21 @@ public class HttpServerVerticle extends AbstractVerticle {
         });
     }
 
+    private void fetchPurchaseByUsernameHandler(RoutingContext ctx) {
+        final String username = ctx.request().getParam("username");
+        accountingDbService.fetchPurchasesForUser(username, asyncReply -> {
+            if (asyncReply.succeeded()) {
+                ctx.response()
+                        .putHeader("Content-Type", "application/json")
+                        .end(asyncReply.result().toBuffer());
+            } else {
+                ctx.fail(asyncReply.cause());
+            }
+        });
+    }
+
     private void fetchPurchaseHandler(RoutingContext ctx) {
-        int id = Integer.parseInt(ctx.request().getParam("id"));
+        final int id = Integer.parseInt(ctx.request().getParam("id"));
         accountingDbService.fetchPurchase(id, asyncReply -> {
             if (asyncReply.succeeded()) {
                 final JsonObject result = asyncReply.result();

@@ -120,6 +120,11 @@ public class AccountingDatabaseServiceVertxProxyHandler extends ProxyHandler {
           service.fetchAllUsers(HelperUtils.createHandler(msg));
           break;
         }
+        case "fetchPurchasesForUser": {
+          service.fetchPurchasesForUser((java.lang.String)json.getValue("username"),
+                        HelperUtils.createHandler(msg));
+          break;
+        }
         case "fetchPurchase": {
           service.fetchPurchase(json.getValue("id") == null ? null : (json.getLong("id").longValue()),
                         HelperUtils.createHandler(msg));

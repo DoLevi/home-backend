@@ -1,13 +1,20 @@
 package de.untenrechts.urhome.transformation;
 
+import io.vertx.core.buffer.Buffer;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 
 
 public class PurchaseBuilder {
 
-    public static JsonObject buildPurchase(final JsonArray purchase, final JsonArray mappings) {
+    public static JsonObject buildLightPurchase(final JsonObject purchase) {
+        return new JsonObject()
+                .put("dateBought", purchase.getString("date_bought"))
+                .put("productName", purchase.getString("product_name"))
+                .put("price", purchase.getFloat("price"));
+    }
 
+    public static JsonObject buildFullPurchase(final JsonArray purchase) {
         return new JsonObject()
                 .put("id", purchase.getLong(0))
                 .put("market", purchase.getString(1))
@@ -16,18 +23,6 @@ public class PurchaseBuilder {
                 .put("productName", purchase.getString(4))
                 .put("price", purchase.getFloat(5))
                 .put("buyer", purchase.getString(6))
-                .put("consumptionMappings", buildPurchaseMappings(mappings));
-    }
-
-    private static JsonArray buildPurchaseMappings(final JsonArray mappings) {
-        return mappings.stream()
-                .map(mapping -> {
-                    final JsonArray mappingRow = (JsonArray) mapping;
-                    return new JsonObject()
-                            .put("id", mappingRow.getLong(0))
-                            .put("username", mappingRow.getString(1))
-                            .put("share", mappingRow.getFloat(2));
-                })
-                .collect(UrhomeCollectors.toJsonArray());
+                .put("consumptionMappings", new JsonArray(Buffer.buffer(purchase.getString(7))));
     }
 }

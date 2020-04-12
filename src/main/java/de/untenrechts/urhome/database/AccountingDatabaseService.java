@@ -28,5 +28,8 @@ public interface AccountingDatabaseService {
     AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler);
 
     @Fluent
+    AccountingDatabaseService fetchPurchasesForUser(String username, Handler<AsyncResult<JsonArray>> resultHandler);
+
+    @Fluent
     AccountingDatabaseService fetchPurchase(long id, Handler<AsyncResult<JsonObject>> resultHandler);
 }

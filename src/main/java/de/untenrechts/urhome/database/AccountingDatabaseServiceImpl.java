@@ -1,7 +1,6 @@
 package de.untenrechts.urhome.database;
 
 import de.untenrechts.urhome.transformation.PurchaseBuilder;
-import de.untenrechts.urhome.transformation.UrhomeCollectors;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -11,6 +10,8 @@ import io.vertx.core.json.JsonObject;
 import io.vertx.ext.jdbc.JDBCClient;
 import io.vertx.ext.sql.SQLConnection;
 import lombok.extern.slf4j.Slf4j;
+
+import java.util.stream.Collectors;
 
 import static de.untenrechts.urhome.database.DatabaseQueries.*;
 
@@ -35,9 +36,9 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     public AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler) {
         jdbcClient.query(SQL_GET_ALL_USERS, asyncFetch -> {
             if (asyncFetch.succeeded()) {
-                final JsonArray users = asyncFetch.result().getRows().stream()
+                final JsonArray users = new JsonArray(asyncFetch.result().getRows().stream()
                         .map(result -> result.getString("username"))
-                        .collect(UrhomeCollectors.toJsonArray());
+                        .collect(Collectors.toList()));
 
                 resultHandler.handle(Future.succeededFuture(users));
             } else {
@@ -49,21 +50,31 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     }
 
     @Override
-    public AccountingDatabaseService fetchPurchase(long id, Handler<AsyncResult<JsonObject>> resultHandler) {
+    public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonArray>> resultHandler) {
+        jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
+            if (asyncFetch.succeeded()) {
+                final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
+                        .map(PurchaseBuilder::buildLightPurchase)
+                        .collect(Collectors.toList()));
+                log.debug("Fetching purchases for username {} from database has succeeded", username);
+
+                resultHandler.handle(Future.succeededFuture(result));
+            } else {
+                log.error("Fetching purchases for username {} from database has failed.",
+                        username, asyncFetch.cause());
+                resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
+            }
+        });
+        fetchPurchasesByUsername(username).onComplete(resultHandler);
+        return this;
+    }
+
+    @Override
+    public AccountingDatabaseService fetchPurchase(final long id, Handler<AsyncResult<JsonObject>> resultHandler) {
         fetchPurchaseById(id).onComplete(asyncPurchase -> {
             if (asyncPurchase.succeeded() && asyncPurchase.result() != null) {
-                fetchPurchaseMappingsById(id).onComplete(asyncMappings -> {
-                    if (asyncMappings.succeeded() && !asyncMappings.result().isEmpty()) {
-                        final JsonObject result = PurchaseBuilder
-                                .buildPurchase(asyncPurchase.result(), asyncMappings.result());
-
-                        resultHandler.handle(Future.succeededFuture(result));
-                    } else if (!asyncMappings.result().isEmpty()) {
-                        resultHandler.handle(Future.succeededFuture(null));
-                    } else {
-                        resultHandler.handle(Future.failedFuture(asyncMappings.cause()));
-                    }
-                });
+                final JsonObject result = PurchaseBuilder.buildFullPurchase(asyncPurchase.result());
+                resultHandler.handle(Future.succeededFuture(result));
             } else if (asyncPurchase.result() == null) {
                 resultHandler.handle(Future.succeededFuture(null));
             } else {
@@ -73,29 +84,30 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         return this;
     }
 
-    private Future<JsonArray> fetchPurchaseById(long id) {
+    private Future<JsonArray> fetchPurchasesByUsername(final String username) {
         Promise<JsonArray> promise = Promise.promise();
-        jdbcClient.querySingleWithParams(SQL_GET_PURCHASE, new JsonArray().add(id), asyncFetch -> {
+        jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
             if (asyncFetch.succeeded()) {
-                log.debug("Fetching purchase for id {} form database has succeeded", id);
-                promise.complete(asyncFetch.result());
+                log.debug("Fetching purchases for username {} from database has succeeded", username);
+                promise.complete(new JsonArray(asyncFetch.result().getResults()));
             } else {
-                log.error("Fetching purchase for id {} from database has failed.", id,
-                        asyncFetch.cause());
+                log.error("Fetching purchases for username {} from database has failed.",
+                        username, asyncFetch.cause());
                 promise.fail(asyncFetch.cause());
             }
         });
         return promise.future();
     }
 
-    private Future<JsonArray> fetchPurchaseMappingsById(long id) {
+    private Future<JsonArray> fetchPurchaseById(final long id) {
         Promise<JsonArray> promise = Promise.promise();
-        jdbcClient.queryWithParams(SQL_GET_PURCHASE_MAPPINGS, new JsonArray().add(id), asyncFetch -> {
+        jdbcClient.querySingleWithParams(SQL_GET_PURCHASE, new JsonArray().add(id).add(id), asyncFetch -> {
             if (asyncFetch.succeeded()) {
-                log.debug("Fetching purchaseMappings for id {} has succeeded.", id);
-                promise.complete(new JsonArray(asyncFetch.result().getResults()));
+                log.debug("Fetching purchase for id {} from database has succeeded", id);
+                promise.complete(asyncFetch.result());
             } else {
-                log.error("Fetching purchaseMappings for id {} has failed.", id, asyncFetch.cause());
+                log.error("Fetching purchase for id {} from database has failed.", id,
+                        asyncFetch.cause());
                 promise.fail(asyncFetch.cause());
             }
         });
