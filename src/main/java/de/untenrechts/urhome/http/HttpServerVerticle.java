@@ -10,11 +10,14 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.api.RequestParameter;
 import io.vertx.ext.web.api.RequestParameters;
+import io.vertx.ext.web.api.validation.CustomValidator;
 import io.vertx.ext.web.api.validation.HTTPRequestValidationHandler;
 import io.vertx.ext.web.api.validation.ParameterType;
+import io.vertx.ext.web.api.validation.ValidationException;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Iterator;
+import java.util.List;
 
 import static de.untenrechts.urhome.MainVerticle.URHOME_DB_QUEUE;
 
@@ -33,14 +36,17 @@ public class HttpServerVerticle extends AbstractVerticle {
         Router router = Router.router(vertx);
         router.get("/user/all").handler(this::fetchAllUsersHandler);
         router.get("/purchase/:id")
-                .handler(HttpServerVerticle.getPurchaseValidationHandler())
+                .handler(fetchPurchaseValidationHandler())
                 .handler(this::fetchPurchaseHandler);
         router.get("/purchase/all/:username")
-                .handler(HttpServerVerticle.getPurchasesForUsernameValidationHandler())
+                .handler(fetchPurchasesForUsernameValidationHandler())
                 .handler(this::fetchPurchaseByUsernameHandler);
         router.post("/purchase")
-                .handler(HttpServerVerticle.createPurchaseValidationHandler())
+                .handler(createPurchaseValidationHandler())
                 .handler(this::createPurchase);
+        router.put("/purchase/:id")
+                .handler(updatePurchaseValidationHandler())
+                .handler(this::updatePurchaseHandler);
 
         HttpServer server = vertx.createHttpServer();
         server.requestHandler(router)
@@ -89,9 +95,7 @@ public class HttpServerVerticle extends AbstractVerticle {
                                     .putHeader("Content-Type", "text/plain")
                                     .end("Username does not belong to any known user.");
                         } else {
-                             ctx.response()
-                                    .putHeader("Content-Type", "application/json")
-                                    .end();
+                            ctx.response().end();
                         }
                     });
         } else {
@@ -120,7 +124,7 @@ public class HttpServerVerticle extends AbstractVerticle {
         accountingDbService.fetchPurchasesForUser(username, asyncReply -> {
             if (asyncReply.succeeded()) {
                 final JsonArray result = asyncReply.result();
-                if (result!= null) {
+                if (result != null) {
                     ctx.response()
                             .putHeader("Content-Type", "application/json")
                             .end(asyncReply.result().toBuffer());
@@ -155,6 +159,59 @@ public class HttpServerVerticle extends AbstractVerticle {
         });
     }
 
+    private void updatePurchaseHandler(RoutingContext ctx) {
+        final RequestParameters params = ctx.get("parsedParameters");
+
+        List<RequestParameter> mappingUsernames
+                = params.queryParameter("consumptionMappingUsernames").getArray();
+        List<RequestParameter> mappingShares
+                = params.queryParameter("consumptionMappingShares").getArray();
+
+        final boolean noMappingUpdate = mappingUsernames == null && mappingShares == null;
+        final boolean validMappingUpdate = mappingUsernames != null
+                && mappingShares != null
+                && mappingUsernames.size() == mappingShares.size();
+
+        if (noMappingUpdate || validMappingUpdate) {
+            JsonObject consumptionMappings = null;
+            if (mappingUsernames != null) {
+                consumptionMappings = new JsonObject();
+                for (int i = 0; i <  mappingUsernames.size(); ++i) {
+                    consumptionMappings.put(mappingUsernames.get(i).getString(),
+                            mappingShares.get(i).getFloat());
+                }
+            }
+
+            accountingDbService.updatePurchase(
+                    params.pathParameter("id").getLong(),
+                    params.queryParameter("buyer").getString(),
+                    params.queryParameter("market").getString(),
+                    params.queryParameter("dateBought").getString(),
+                    params.queryParameter("productCategory").getString(),
+                    params.queryParameter("productName").getString(),
+                    params.queryParameter("price").getFloat(),
+                    consumptionMappings,
+                    asyncReply -> {
+                        if (asyncReply.failed()) {
+                            ctx.fail(asyncReply.cause());
+                        } else if (!asyncReply.result()) {
+                            ctx.response()
+                                    .setStatusCode(404)
+                                    .putHeader("Content-Type", "text/plain")
+                                    .end("Username does not belong to any known user.");
+                        } else {
+                            ctx.response().end();
+                        }
+                    });
+        } else {
+            ctx.response()
+                    .setStatusCode(400)
+                    .putHeader("Content-Type", "text/plain")
+                    .end("Either both query parameters (mappingUsernames, mappingShare) with " +
+                            "the same length or none of them must be present.");
+        }
+    }
+
     private static HTTPRequestValidationHandler createPurchaseValidationHandler() {
         return HTTPRequestValidationHandler.create()
                 .addQueryParam("buyer", ParameterType.GENERIC_STRING, true)
@@ -167,13 +224,26 @@ public class HttpServerVerticle extends AbstractVerticle {
                 .addQueryParamsArray("consumptionMappingShares", ParameterType.INT, true);
     }
 
-    private static HTTPRequestValidationHandler getPurchaseValidationHandler() {
+    private static HTTPRequestValidationHandler fetchPurchaseValidationHandler() {
         return HTTPRequestValidationHandler.create()
                 .addPathParam("id", ParameterType.INT);
     }
 
-    private static HTTPRequestValidationHandler getPurchasesForUsernameValidationHandler() {
+    private static HTTPRequestValidationHandler fetchPurchasesForUsernameValidationHandler() {
         return HTTPRequestValidationHandler.create()
                 .addPathParam("username", ParameterType.GENERIC_STRING);
+    }
+
+    private static HTTPRequestValidationHandler updatePurchaseValidationHandler() {
+        return HTTPRequestValidationHandler.create()
+                .addPathParam("id", ParameterType.INT)
+                .addQueryParam("buyer", ParameterType.GENERIC_STRING, false)
+                .addQueryParam("market", ParameterType.GENERIC_STRING, false)
+                .addQueryParam("dateBought", ParameterType.GENERIC_STRING, false)
+                .addQueryParam("productCategory", ParameterType.GENERIC_STRING, false)
+                .addQueryParam("productName", ParameterType.GENERIC_STRING, false)
+                .addQueryParam("price", ParameterType.FLOAT, false)
+                .addQueryParamsArray("consumptionMappingUsernames", ParameterType.GENERIC_STRING, false)
+                .addQueryParamsArray("consumptionMappingShare", ParameterType.FLOAT, false);
     }
 }

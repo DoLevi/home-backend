@@ -42,4 +42,15 @@ public interface AccountingDatabaseService {
 
     @Fluent
     AccountingDatabaseService fetchPurchase(long id, Handler<AsyncResult<JsonObject>> resultHandler);
+
+    @Fluent
+    AccountingDatabaseService updatePurchase(long id,
+                                             final String buyer,
+                                             final String market,
+                                             final String dateBought,
+                                             final String productCategory,
+                                             final String productName,
+                                             final Float price,
+                                             final JsonObject consumptionMappings,
+                                             Handler<AsyncResult<Boolean>> resultHandler);
 }
