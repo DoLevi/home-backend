@@ -8,9 +8,13 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.api.RequestParameter;
+import io.vertx.ext.web.api.RequestParameters;
 import io.vertx.ext.web.api.validation.HTTPRequestValidationHandler;
 import io.vertx.ext.web.api.validation.ParameterType;
 import lombok.extern.slf4j.Slf4j;
+
+import java.util.Iterator;
 
 import static de.untenrechts.urhome.MainVerticle.URHOME_DB_QUEUE;
 
@@ -34,6 +38,9 @@ public class HttpServerVerticle extends AbstractVerticle {
         router.get("/purchase/all/:username")
                 .handler(HttpServerVerticle.getPurchasesForUsernameValidationHandler())
                 .handler(this::fetchPurchaseByUsernameHandler);
+        router.post("/purchase")
+                .handler(HttpServerVerticle.createPurchaseValidationHandler())
+                .handler(this::createPurchase);
 
         HttpServer server = vertx.createHttpServer();
         server.requestHandler(router)
@@ -46,7 +53,54 @@ public class HttpServerVerticle extends AbstractVerticle {
                         promise.fail(ar.cause());
                     }
                 });
+    }
 
+    private void createPurchase(RoutingContext ctx) {
+        final RequestParameters params = ctx.get("parsedParameters");
+
+        Iterator<RequestParameter> mappingUsernames
+                = params.queryParameter("consumptionMappingUsernames").getArray().iterator();
+        Iterator<RequestParameter> mappingShares
+                = params.queryParameter("consumptionMappingShares").getArray().iterator();
+
+        JsonObject consumptionMappings = new JsonObject();
+        while (mappingUsernames.hasNext() && mappingShares.hasNext()) {
+            consumptionMappings.put(
+                    mappingUsernames.next().getString(),
+                    mappingShares.next().getInteger()
+            );
+        }
+
+        if (!mappingUsernames.hasNext() && !mappingShares.hasNext()) {
+            accountingDbService.createPurchase(
+                    params.queryParameter("buyer").getString(),
+                    params.queryParameter("market").getString(),
+                    params.queryParameter("dateBought").getString(),
+                    params.queryParameter("productCategory").getString(),
+                    params.queryParameter("productName").getString(),
+                    params.queryParameter("price").getFloat(),
+                    consumptionMappings,
+                    asyncReply -> {
+                        if (asyncReply.failed()) {
+                            ctx.fail(asyncReply.cause());
+                        } else if (!asyncReply.result()) {
+                            ctx.response()
+                                    .setStatusCode(404)
+                                    .putHeader("Content-Type", "text/plain")
+                                    .end("Username does not belong to any known user.");
+                        } else {
+                             ctx.response()
+                                    .putHeader("Content-Type", "application/json")
+                                    .end();
+                        }
+                    });
+        } else {
+            ctx.response()
+                    .setStatusCode(400)
+                    .putHeader("Content-Type", "text/plain")
+                    .end("consumptionMappingUsernames and consumptionMappingShares must have " +
+                            "the same number of entries.");
+        }
     }
 
     private void fetchAllUsersHandler(RoutingContext ctx) {
@@ -99,6 +153,18 @@ public class HttpServerVerticle extends AbstractVerticle {
                 ctx.fail(asyncReply.cause());
             }
         });
+    }
+
+    private static HTTPRequestValidationHandler createPurchaseValidationHandler() {
+        return HTTPRequestValidationHandler.create()
+                .addQueryParam("buyer", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("market", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("dateBought", ParameterType.DATE, true)
+                .addQueryParam("productCategory", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("productName", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("price", ParameterType.FLOAT, true)
+                .addQueryParamsArray("consumptionMappingUsernames", ParameterType.GENERIC_STRING, true)
+                .addQueryParamsArray("consumptionMappingShares", ParameterType.INT, true);
     }
 
     private static HTTPRequestValidationHandler getPurchaseValidationHandler() {

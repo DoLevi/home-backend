@@ -116,6 +116,17 @@ public class AccountingDatabaseServiceVertxProxyHandler extends ProxyHandler {
       if (action == null) throw new IllegalStateException("action not specified");
       accessed();
       switch (action) {
+        case "createPurchase": {
+          service.createPurchase((java.lang.String)json.getValue("buyer"),
+                        (java.lang.String)json.getValue("market"),
+                        (java.lang.String)json.getValue("dateBought"),
+                        (java.lang.String)json.getValue("productCategory"),
+                        (java.lang.String)json.getValue("productName"),
+                        json.getValue("price") == null ? null : (json.getDouble("price").floatValue()),
+                        (io.vertx.core.json.JsonObject)json.getValue("consumptionMappings"),
+                        HelperUtils.createHandler(msg));
+          break;
+        }
         case "fetchAllUsers": {
           service.fetchAllUsers(HelperUtils.createHandler(msg));
           break;

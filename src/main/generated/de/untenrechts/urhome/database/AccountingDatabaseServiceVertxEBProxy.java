@@ -64,6 +64,32 @@ public class AccountingDatabaseServiceVertxEBProxy implements AccountingDatabase
   }
 
   @Override
+  public  AccountingDatabaseService createPurchase(String buyer, String market, String dateBought, String productCategory, String productName, float price, JsonObject consumptionMappings, Handler<AsyncResult<Boolean>> resultHandler){
+    if (closed) {
+      resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));
+      return this;
+    }
+    JsonObject _json = new JsonObject();
+    _json.put("buyer", buyer);
+    _json.put("market", market);
+    _json.put("dateBought", dateBought);
+    _json.put("productCategory", productCategory);
+    _json.put("productName", productName);
+    _json.put("price", price);
+    _json.put("consumptionMappings", consumptionMappings);
+
+    DeliveryOptions _deliveryOptions = (_options != null) ? new DeliveryOptions(_options) : new DeliveryOptions();
+    _deliveryOptions.addHeader("action", "createPurchase");
+    _vertx.eventBus().<Boolean>request(_address, _json, _deliveryOptions, res -> {
+      if (res.failed()) {
+        resultHandler.handle(Future.failedFuture(res.cause()));
+      } else {
+        resultHandler.handle(Future.succeededFuture(res.result().body()));
+      }
+    });
+    return this;
+  }
+  @Override
   public  AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler){
     if (closed) {
       resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));

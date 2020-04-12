@@ -25,6 +25,16 @@ public interface AccountingDatabaseService {
     }
 
     @Fluent
+    AccountingDatabaseService createPurchase(final String buyer,
+                                             final String market,
+                                             final String dateBought,
+                                             final String productCategory,
+                                             final String productName,
+                                             final float price,
+                                             final JsonObject consumptionMappings,
+                                             Handler<AsyncResult<Boolean>> resultHandler);
+
+    @Fluent
     AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler);
 
     @Fluent

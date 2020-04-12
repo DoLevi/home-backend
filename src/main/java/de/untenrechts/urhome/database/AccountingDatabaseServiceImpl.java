@@ -11,6 +11,8 @@ import io.vertx.ext.jdbc.JDBCClient;
 import io.vertx.ext.sql.SQLConnection;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Iterator;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static de.untenrechts.urhome.database.DatabaseQueries.*;
@@ -33,6 +35,57 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     }
 
     @Override
+    public AccountingDatabaseService createPurchase(final String buyer,
+                                                    final String market,
+                                                    final String dateBought,
+                                                    final String productCategory,
+                                                    final String productName,
+                                                    final float price,
+                                                    final JsonObject consumptionMappings,
+                                                    Handler<AsyncResult<Boolean>> resultHandler) {
+        fetchUserId(buyer).onComplete(asyncBuyerId -> {
+            if (!asyncBuyerId.succeeded()) {
+                log.error("Creating purchase in database has failed.", asyncBuyerId.cause());
+                resultHandler.handle(Future.failedFuture(asyncBuyerId.cause()));
+                return;
+            }
+            log.debug("Fetching all user-ids from database for user {} has succeeded.", buyer);
+
+            if (asyncBuyerId.result() == null) {
+                log.warn("Creating purchase for unknown buyer {} in database has failed.", buyer);
+                resultHandler.handle(Future.succeededFuture(false));
+                return;
+            }
+            final long buyerId = asyncBuyerId.result();
+            log.debug("Fetching a valid user-id from database for user {} has succeeded.", buyer);
+
+            jdbcClient.getConnection(asyncConnection -> {
+                if (!asyncConnection.succeeded()) {
+                    log.error("Establishing a database connection has failed.",
+                            asyncConnection.cause());
+                    resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
+                    return;
+                }
+                log.debug("Establishing a database connection has succeeded.");
+
+                final SQLConnection connection = asyncConnection.result();
+                connection.setAutoCommit(false, asyncSetter -> {
+                    if (!asyncSetter.succeeded()) {
+                        log.error("Establishing a database connection has failed.",
+                                asyncConnection.cause());
+                        resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
+                        return;
+                    }
+                    log.debug("Setting autoCommit to false for this connection has succeeded.");
+
+                    createPurchase(connection, buyerId, market, dateBought, productCategory, productName, price, consumptionMappings, resultHandler);
+                });
+            });
+        });
+        return this;
+    }
+
+    @Override
     public AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler) {
         jdbcClient.query(SQL_GET_ALL_USERS, asyncFetch -> {
             if (asyncFetch.succeeded()) {
@@ -51,8 +104,8 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
 
     @Override
     public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonArray>> resultHandler) {
-        verifyUser(username).onComplete(asyncVerification -> {
-            if (asyncVerification.succeeded() && asyncVerification.result()) {
+        fetchUserId(username).onComplete(asyncVerification -> {
+            if (asyncVerification.succeeded() && asyncVerification.result() != null) {
                 jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
                     if (asyncFetch.succeeded()) {
                         final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
@@ -67,7 +120,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                         resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
                     }
                 });
-            } else if (!asyncVerification.result()) {
+            } else if (asyncVerification.result() == null) {
                 log.warn("Fetching purchases for unknown username {} from database has failed.",
                         username);
                 resultHandler.handle(Future.succeededFuture());
@@ -102,11 +155,125 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         return this;
     }
 
-    private Future<Boolean> verifyUser(final String username) {
+    private static void createPurchase(final SQLConnection connection,
+                                       final long buyerId,
+                                       final String market,
+                                       final String dateBought,
+                                       final String productCategory,
+                                       final String productName,
+                                       final float price,
+                                       final JsonObject consumptionMappings,
+                                       Handler<AsyncResult<Boolean>> resultHandler) {
+        connection.updateWithParams(SQL_CREATE_PURCHASE,
+                new JsonArray()
+                        .add(market)
+                        .add(dateBought)
+                        .add(productCategory)
+                        .add(productName)
+                        .add(price)
+                        .add(buyerId),
+                asyncUpdate -> {
+                    if (asyncUpdate.succeeded()) {
+                        final long insertedPurchaseId = asyncUpdate.result()
+                                .getKeys()
+                                .getLong(0);
+                        createPurchaseMappings(connection, insertedPurchaseId, consumptionMappings)
+                                .onSuccess(allKnown -> resultHandler.handle(Future.succeededFuture(allKnown)))
+                                .onFailure(t -> connection.rollback(v -> {
+                                    if (v.succeeded()) {
+                                        resultHandler.handle(Future.failedFuture(t));
+                                    } else {
+                                        log.error("Rolling back for creation of " +
+                                                "purchaseMappings has failed.", v.cause());
+                                        resultHandler.handle(Future.failedFuture(v.cause()));
+                                    }
+                                }));
+                    } else {
+                        connection.close();
+                        log.error("Creating purchase in database has failed.",
+                                asyncUpdate.cause());
+                        resultHandler.handle(Future.failedFuture(asyncUpdate.cause()));
+                    }
+                });
+    }
+
+    private static Future<Boolean> createPurchaseMappings(final SQLConnection connection,
+                                                          final long purchaseId,
+                                                          final JsonObject consumptionMappings) {
         Promise<Boolean> promise = Promise.promise();
-        jdbcClient.querySingleWithParams(SQL_VERIFY_USER, new JsonArray().add(username), asyncFetch -> {
-            if (asyncFetch.succeeded()) {
-                promise.complete(asyncFetch.result() != null);
+
+        Iterator<Map.Entry<String, Object>> iterator = consumptionMappings.iterator();
+        createPurchaseMappings(connection, purchaseId, iterator, asyncResult -> {
+            if (asyncResult.failed()) {
+                promise.fail(asyncResult.cause());
+            } else if (asyncResult.result()) {
+                connection.commit(v -> promise.complete(true));
+            } else {
+                promise.complete(false);
+            }
+        });
+
+        return promise.future();
+    }
+
+    private static void createPurchaseMappings(final SQLConnection connection,
+                                               final long purchaseId,
+                                               Iterator<Map.Entry<String, Object>> remainingConsumptionMappings,
+                                               Handler<AsyncResult<Boolean>> resultHandler) {
+        if (remainingConsumptionMappings.hasNext()) {
+            final Map.Entry<String, Object> entry = remainingConsumptionMappings.next();
+            fetchUserId(connection, entry.getKey())
+                    .onSuccess(buyerId -> {
+                        if (buyerId != null) {
+                            connection.updateWithParams(SQL_CREATE_PURCHASE_MAPPINGS,
+                                    new JsonArray()
+                                            .add(purchaseId)
+                                            .add(buyerId)
+                                            .add(entry.getValue()),
+                                    asyncUpdate -> {
+                                        if (asyncUpdate.succeeded()) {
+                                            log.debug("Creating purchase mapping for purchase id {} and consumer {} has succeeded.",
+                                                    purchaseId, entry.getKey());
+                                            createPurchaseMappings(connection, purchaseId,
+                                                    remainingConsumptionMappings, resultHandler);
+                                        } else {
+                                            resultHandler.handle(Future.failedFuture(asyncUpdate.cause()));
+                                        }
+                                    });
+                        } else {
+                            log.error("Creating purchase mapping for purchase id {} unknown consumer {} has failed.",
+                                    purchaseId, entry.getKey());
+                            resultHandler.handle(Future.succeededFuture(false));
+                        }
+                    })
+                    .onFailure(throwable -> resultHandler.handle(Future.failedFuture(throwable)));
+        } else {
+            log.info("Leaving last iteration");
+            resultHandler.handle(Future.succeededFuture(true));
+        }
+    }
+
+    private Future<Long> fetchUserId(final String username) {
+        Promise<Long> promise = Promise.promise();
+        jdbcClient.getConnection(asyncConnection -> {
+            if (asyncConnection.succeeded()) {
+                fetchUserId(asyncConnection.result(), username)
+                        .onSuccess(promise::complete)
+                        .onFailure(promise::fail);
+            } else {
+                promise.fail(asyncConnection.cause());
+            }
+        });
+        return promise.future();
+    }
+
+    private static Future<Long> fetchUserId(final SQLConnection connection, final String username) {
+        Promise<Long> promise = Promise.promise();
+        connection.querySingleWithParams(SQL_GET_USER_ID, new JsonArray().add(username), asyncFetch -> {
+            if (asyncFetch.succeeded() && asyncFetch.result() != null) {
+                promise.complete(asyncFetch.result().getLong(0));
+            } else if (asyncFetch.result() == null) {
+                promise.complete(null);
             } else {
                 promise.fail(asyncFetch.cause());
             }
