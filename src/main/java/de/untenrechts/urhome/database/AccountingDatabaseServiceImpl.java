@@ -1,6 +1,7 @@
 package de.untenrechts.urhome.database;
 
 import de.untenrechts.urhome.transformation.PurchaseBuilder;
+import de.untenrechts.urhome.transformation.Tuple;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -11,9 +12,9 @@ import io.vertx.ext.jdbc.JDBCClient;
 import io.vertx.ext.sql.SQLConnection;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.Iterator;
-import java.util.Map;
+import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static de.untenrechts.urhome.database.DatabaseQueries.*;
 
@@ -43,50 +44,149 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                                                     final float price,
                                                     final JsonObject consumptionMappings,
                                                     Handler<AsyncResult<Boolean>> resultHandler) {
-        fetchUserId(buyer).onComplete(asyncBuyerId -> {
-            if (!asyncBuyerId.succeeded()) {
-                log.error("Creating purchase in database has failed.", asyncBuyerId.cause());
-                resultHandler.handle(Future.failedFuture(asyncBuyerId.cause()));
-                return;
-            }
-            log.debug("Fetching all user-ids from database for user {} has succeeded.", buyer);
-
-            if (asyncBuyerId.result() == null) {
-                log.warn("Creating purchase for unknown buyer {} in database has failed.", buyer);
-                resultHandler.handle(Future.succeededFuture(false));
-                return;
-            }
-            final long buyerId = asyncBuyerId.result();
-            log.debug("Fetching a valid user-id from database for user {} has succeeded.", buyer);
-
-            jdbcClient.getConnection(asyncConnection -> {
-                if (!asyncConnection.succeeded()) {
-                    log.error("Establishing a database connection has failed.",
-                            asyncConnection.cause());
-                    resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
-                    return;
-                }
-                log.debug("Establishing a database connection has succeeded.");
-
+        jdbcClient.getConnection(asyncConnection -> {
+            if (asyncConnection.succeeded()) {
+                // Prepare connection
                 final SQLConnection connection = asyncConnection.result();
-                connection.setAutoCommit(false, asyncSetter -> {
-                    if (!asyncSetter.succeeded()) {
-                        log.error("Establishing a database connection has failed.",
-                                asyncConnection.cause());
-                        resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
-                        return;
+                log.debug("Disabling autocommit for purchase creation, buyer {}...", buyer);
+                connection.setAutoCommit(false, v -> {
+                    if (v.failed()) {
+                        log.error("Disabling autocommit for purchase creation, buyer {} failed.",
+                                buyer);
+                        resultHandler.handle(Future.failedFuture(v.cause()));
                     }
-                    log.debug("Setting autoCommit to false for this connection has succeeded.");
-
-                    createPurchase(connection, buyerId, market, dateBought, productCategory, productName, price, consumptionMappings, resultHandler);
                 });
-            });
+
+                final Map<String, Integer> consumptionMappingsMap = consumptionMappings.stream()
+                        .collect(Collectors.toMap(
+                                Map.Entry::getKey,
+                                entry -> (Integer) entry.getValue()));
+
+                // Create purchase
+                Future<Boolean> createPurchaseSteps = fetchUserId(connection, buyer)
+                        .compose(buyerId -> createPurchase(connection, buyerId, market, dateBought, productCategory, productName, price))
+                        .compose(purchaseId -> extractConsumptionMappings(connection, purchaseId, Stream.empty(), consumptionMappingsMap.entrySet().iterator()))
+                        .compose(mappings -> createConsumptionMappings(connection, mappings.getKey(), mappings.getValue()));
+
+                // Clean everything up
+                createPurchaseSteps
+                        .onSuccess(bUpdate -> {
+                            if (bUpdate) {
+                                log.debug("Committing purchase creation, buyer {}...", buyer);
+                                connection.commit(vCommit -> {
+                                    connection.close();
+                                    if (vCommit.failed()) {
+                                        log.error("Committing for purchase creation, buyer {} " +
+                                                "failed.", buyer, vCommit.cause());
+                                        resultHandler.handle(Future.failedFuture(vCommit.cause()));
+                                    } else {
+                                        resultHandler.handle(Future.succeededFuture(true));
+                                    }
+                                });
+                            } else {
+                                log.error("Creating purchase, buyer {} failed.", buyer);
+                                connection.close();
+                                resultHandler.handle(Future.succeededFuture(false));
+                            }
+                        });
+            } else {
+                log.error("Establishing database connection for purchase creation, buyer {} failed.",
+                        buyer, asyncConnection.cause());
+                resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
+            }
         });
         return this;
     }
 
+    private static Future<Long> createPurchase(final SQLConnection connection,
+                                               final Long buyerId,
+                                               final String market,
+                                               final String dateBought,
+                                               final String productCategory,
+                                               final String productName,
+                                               final float price) {
+        Promise<Long> promise = Promise.promise();
+        if (buyerId != null) {
+            final JsonArray queryParams = new JsonArray()
+                    .add(market)
+                    .add(dateBought)
+                    .add(productCategory)
+                    .add(productName)
+                    .add(price)
+                    .add(buyerId);
+            log.debug("Creating purchase, buyer id {}...", buyerId);
+
+            connection.updateWithParams(SQL_CREATE_PURCHASE, queryParams, asyncUpdate -> {
+                if (asyncUpdate.succeeded()) {
+                    final long purchaseId = asyncUpdate.result().getKeys().getLong(0);
+                    promise.complete(purchaseId);
+                } else {
+                    log.error("Creating purchase, buyer id {} failed.", buyerId,
+                            asyncUpdate.cause());
+                    promise.fail(asyncUpdate.cause());
+                }
+            });
+        } else {
+            promise.complete();
+        }
+        return promise.future();
+    }
+
+    private static Future<Map.Entry<Long, Map<Long, Integer>>> extractConsumptionMappings(final SQLConnection connection,
+                                                                                          final Long purchaseId,
+                                                                                          Stream<Map.Entry<Long, Integer>> extractedMappings,
+                                                                                          final Iterator<Map.Entry<String, Integer>> rawMappings) {
+        Promise<Map.Entry<Long, Map<Long, Integer>>> promise = Promise.promise();
+        if (purchaseId != null) {
+            if (rawMappings.hasNext()) {
+                final Map.Entry<String, Integer> rawMapping = rawMappings.next();
+                log.debug("Extracting consumption mapping, purchase id {}, username {}...",
+                        purchaseId, rawMapping.getKey());
+
+                fetchUserId(connection, rawMapping.getKey())
+                        .onSuccess(consumerId -> {
+                            log.debug("Building consumption mapping entry, purchase id {}, " +
+                                    "user id {}...", purchaseId, consumerId);
+                            final Map.Entry<Long, Integer> mapping
+                                    = Map.entry(consumerId, rawMapping.getValue());
+
+                            extractConsumptionMappings(connection, purchaseId,
+                                    Stream.concat(extractedMappings, Stream.of(mapping)), rawMappings)
+                                    .onSuccess(promise::complete)
+                                    .onFailure(promise::fail);
+                        })
+                        .onFailure(promise::fail);
+            } else {
+                log.debug("Building Map.Entry from extracted consumption mapping data...");
+                final Map<Long, Integer> result = extractedMappings
+                        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+                promise.complete(Map.entry(purchaseId, result));
+            }
+        } else {
+            promise.complete();
+        }
+        return promise.future();
+    }
+
+    private static Future<Boolean> createConsumptionMappings(final SQLConnection connection,
+                                                             final Long purchaseId,
+                                                             final Map<Long, Integer> mappings) {
+        Promise<Boolean> promise = Promise.promise();
+        if (purchaseId != null) {
+            log.debug("Creating consumption mappings, purchase id {}...", purchaseId);
+            createConsumptionMappings(connection, purchaseId, mappings.entrySet().iterator())
+                    .onSuccess(v -> promise.complete(true))
+                    .onFailure(promise::fail);
+        } else {
+            promise.complete(false);
+        }
+        return promise.future();
+    }
+
     @Override
     public AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler) {
+        log.debug("Fetching all users...");
         jdbcClient.query(SQL_GET_ALL_USERS, asyncFetch -> {
             if (asyncFetch.succeeded()) {
                 final JsonArray users = new JsonArray(asyncFetch.result().getRows().stream()
@@ -104,166 +204,327 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
 
     @Override
     public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonArray>> resultHandler) {
-        fetchUserId(username).onComplete(asyncVerification -> {
-            if (asyncVerification.succeeded() && asyncVerification.result() != null) {
-                jdbcClient.queryWithParams(SQL_GET_PURCHASES, new JsonArray().add(username), asyncFetch -> {
-                    if (asyncFetch.succeeded()) {
-                        final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
-                                .map(PurchaseBuilder::buildLightPurchase)
-                                .collect(Collectors.toList()));
-                        log.debug("Fetching purchases for username {} from database has succeeded", username);
-
-                        resultHandler.handle(Future.succeededFuture(result));
-                    } else {
-                        log.error("Fetching purchases for username {} from database has failed.",
-                                username, asyncFetch.cause());
-                        resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
-                    }
-                });
-            } else if (asyncVerification.result() == null) {
-                log.warn("Fetching purchases for unknown username {} from database has failed.",
-                        username);
-                resultHandler.handle(Future.succeededFuture());
+        jdbcClient.getConnection(asyncConnection -> {
+            if (asyncConnection.succeeded()) {
+                final SQLConnection connection = asyncConnection.result();
+                fetchUserId(connection, username)
+                        .compose(userId -> fetchPurchasesForUser(connection, userId))
+                        .onComplete(resultHandler);
             } else {
-                log.error("Fetching purchases for username {} from database has failed.",
-                        username, asyncVerification.cause());
-                resultHandler.handle(Future.failedFuture(asyncVerification.cause()));
+                resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
             }
         });
         return this;
     }
 
+    private static Future<JsonArray> fetchPurchasesForUser(final SQLConnection connection,
+                                                           final Long userId) {
+        Promise<JsonArray> promise = Promise.promise();
+        if (userId != null) {
+            final JsonArray queryParams = new JsonArray().add(userId);
+            log.debug("Fetching purchases for user, id {}...", userId);
+
+            connection.queryWithParams(SQL_GET_PURCHASES, queryParams, asyncFetch -> {
+                if (asyncFetch.succeeded()) {
+                    final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
+                            .map(PurchaseBuilder::buildLightPurchase)
+                            .collect(Collectors.toList()));
+                    promise.complete(result);
+                } else {
+                    log.error("Fetching purchases for user, id {} failed.", userId);
+                    promise.fail(asyncFetch.cause());
+                }
+            });
+        } else {
+            promise.complete(null);
+        }
+        return promise.future();
+    }
+
     @Override
     public AccountingDatabaseService fetchPurchase(final long id, Handler<AsyncResult<JsonObject>> resultHandler) {
-        jdbcClient.querySingleWithParams(SQL_GET_PURCHASE, new JsonArray().add(id).add(id), asyncFetch -> {
+        log.debug("Fetching purchase, id {}...", id);
+        final JsonArray queryParams = new JsonArray().add(id).add(id);
+
+        jdbcClient.querySingleWithParams(SQL_GET_PURCHASE, queryParams, asyncFetch -> {
             if (asyncFetch.succeeded()) {
-                log.debug("Fetching purchase for id {} from database has succeeded", id);
                 if (asyncFetch.result() != null) {
                     final JsonObject result = PurchaseBuilder.buildFullPurchase(asyncFetch.result());
                     resultHandler.handle(Future.succeededFuture(result));
                 } else {
-                    log.warn("Fetching purchase for id {} from database has resulted in an empty response",
-                            id);
+                    log.warn("Fetching purchase, id {} yielded no matching results.", id);
                     resultHandler.handle(Future.succeededFuture());
                 }
             } else {
-                log.error("Fetching purchase for id {} from database has failed.", id,
-                        asyncFetch.cause());
+                log.error("Fetching purchase, id {} failed.", id, asyncFetch.cause());
                 resultHandler.handle(Future.failedFuture(asyncFetch.cause()));
             }
         });
         return this;
     }
 
-    private static void createPurchase(final SQLConnection connection,
-                                       final long buyerId,
-                                       final String market,
-                                       final String dateBought,
-                                       final String productCategory,
-                                       final String productName,
-                                       final float price,
-                                       final JsonObject consumptionMappings,
-                                       Handler<AsyncResult<Boolean>> resultHandler) {
-        connection.updateWithParams(SQL_CREATE_PURCHASE,
-                new JsonArray()
-                        .add(market)
-                        .add(dateBought)
-                        .add(productCategory)
-                        .add(productName)
-                        .add(price)
-                        .add(buyerId),
-                asyncUpdate -> {
-                    if (asyncUpdate.succeeded()) {
-                        final long insertedPurchaseId = asyncUpdate.result()
-                                .getKeys()
-                                .getLong(0);
-                        createPurchaseMappings(connection, insertedPurchaseId, consumptionMappings)
-                                .onSuccess(allKnown -> resultHandler.handle(Future.succeededFuture(allKnown)))
-                                .onFailure(t -> connection.rollback(v -> {
-                                    if (v.succeeded()) {
-                                        resultHandler.handle(Future.failedFuture(t));
-                                    } else {
-                                        log.error("Rolling back for creation of " +
-                                                "purchaseMappings has failed.", v.cause());
-                                        resultHandler.handle(Future.failedFuture(v.cause()));
-                                    }
-                                }));
-                    } else {
-                        connection.close();
-                        log.error("Creating purchase in database has failed.",
-                                asyncUpdate.cause());
-                        resultHandler.handle(Future.failedFuture(asyncUpdate.cause()));
+    @Override
+    public AccountingDatabaseService updatePurchase(long id,
+                                                    final String buyer,
+                                                    final String market,
+                                                    final String dateBought,
+                                                    final String productCategory,
+                                                    final String productName,
+                                                    final Float price,
+                                                    final JsonObject consumptionMappings,
+                                                    Handler<AsyncResult<Boolean>> resultHandler) {
+        log.debug("Establishing database connection for purchase update, id {}...", id);
+        jdbcClient.getConnection(asyncConnection -> {
+            if (asyncConnection.succeeded()) {
+                // Prepare connection
+                final SQLConnection connection = asyncConnection.result();
+                log.debug("Disabling autocommit for purchase update, id {}...", id);
+                connection.setAutoCommit(false, v -> {
+                    if (v.failed()) {
+                        log.error("Disabling autocommit for purchase update, id {} failed.", id);
+                        resultHandler.handle(Future.failedFuture(v.cause()));
                     }
                 });
-    }
 
-    private static Future<Boolean> createPurchaseMappings(final SQLConnection connection,
-                                                          final long purchaseId,
-                                                          final JsonObject consumptionMappings) {
-        Promise<Boolean> promise = Promise.promise();
+                // Execute the update
+                Future<Void> updatePurchaseSteps = fetchUserId(connection, buyer)
+                        .compose(buyerId -> updatePurchase(connection, id, buyerId, market, dateBought, productCategory, productName, price))
+                        .compose(vUpdatePurchase -> updateConsumptionMappings(connection, id, consumptionMappings));
 
-        Iterator<Map.Entry<String, Object>> iterator = consumptionMappings.iterator();
-        createPurchaseMappings(connection, purchaseId, iterator, asyncResult -> {
-            if (asyncResult.failed()) {
-                promise.fail(asyncResult.cause());
-            } else if (asyncResult.result()) {
-                connection.commit(v -> promise.complete(true));
+                log.debug("Committing and closing connection for purchase update, id {}...", id);
+
+                // Clean everything up
+                updatePurchaseSteps
+                        .onSuccess(vUpdate -> connection.commit(vCommit -> {
+                            connection.close();
+                            if (vCommit.failed()) {
+                                log.error("Committing for purchase update, id {} failed.",
+                                        id, vCommit.cause());
+                                resultHandler.handle(Future.failedFuture(vCommit.cause()));
+                            } else {
+                                resultHandler.handle(Future.succeededFuture(true));
+                            }
+                        }))
+                        .onFailure(thrown -> {
+                            connection.close();
+                            log.error("Updating purchase, id {} failed.", id, thrown);
+                            resultHandler.handle(Future.failedFuture(thrown));
+                        });
             } else {
-                promise.complete(false);
+                log.error("Establishing database connection for purchase update, id {} failed.",
+                        id, asyncConnection.cause());
+                resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
             }
         });
+        return this;
+    }
+
+    private static Future<Void> updatePurchase(final SQLConnection connection,
+                                               final long purchaseId,
+                                               final long buyerId,
+                                               final String market,
+                                               final String dateBought,
+                                               final String productCategory,
+                                               final String productName,
+                                               final Float price) {
+        Promise<Void> promise = Promise.promise();
+        final JsonArray sqlQueryParams = new JsonArray()
+                .add(market)
+                .add(dateBought)
+                .add(productCategory)
+                .add(productName)
+                .add(price)
+                .add(buyerId)
+                .add(purchaseId);
+
+        log.debug("Updating purchase with id {}...", purchaseId);
+
+        connection.updateWithParams(SQL_UPDATE_PURCHASE, sqlQueryParams, asyncUpdate -> {
+            if (asyncUpdate.succeeded()) {
+                promise.complete();
+            } else {
+                log.error("Updating purchase with id {} failed.", purchaseId, asyncUpdate.cause());
+                promise.fail(asyncUpdate.cause());
+            }
+        });
+        return promise.future();
+    }
+
+    private static Future<Void> updateConsumptionMappings(final SQLConnection connection,
+                                                          final long purchaseId,
+                                                          final JsonObject mappings) {
+        Promise<Void> promise = Promise.promise();
+
+        extractConsumptionMappings(connection, purchaseId, mappings)
+                .compose(desiredMappings -> {
+                    Promise<Tuple<Map<Long, Integer>, Map<Long, Integer>>> mapsPromise
+                            = Promise.promise();
+
+                    fetchConsumptionMappings(connection, purchaseId)
+                            .onSuccess(knownMappings -> mapsPromise.complete(
+                                    new Tuple<>(knownMappings, desiredMappings)))
+                            .onFailure(mapsPromise::fail);
+
+                    return mapsPromise.future();
+                })
+                .onSuccess(mappingsTuple -> {
+                    final Map<Long, Integer> knownMappings = mappingsTuple.getT();
+                    final Map<Long, Integer> desiredMappings = mappingsTuple.getR();
+
+                    final Iterator<Map.Entry<Long, Integer>> missingMappings
+                            = desiredMappings.entrySet().stream()
+                            .filter(entry -> !knownMappings.containsKey(entry.getKey()))
+                            .iterator();
+
+                    final Iterator<Map.Entry<Long, Integer>> changedMappings
+                            = desiredMappings.entrySet().stream()
+                            .filter(entry -> knownMappings.containsKey(entry.getKey()))
+                            .iterator();
+
+                    final Iterator<Long> superfluousMappings
+                            = knownMappings.keySet().stream()
+                            .filter(buyerId -> !desiredMappings.containsKey(buyerId))
+                            .iterator();
+
+                    createConsumptionMappings(connection, purchaseId, missingMappings)
+                            .compose(v -> updateConsumptionMappings(connection, purchaseId, changedMappings))
+                            .compose(v -> removeConsumptionMappings(connection, purchaseId, superfluousMappings))
+                            .onComplete(promise);
+                })
+                .onFailure(promise::fail);
 
         return promise.future();
     }
 
-    private static void createPurchaseMappings(final SQLConnection connection,
-                                               final long purchaseId,
-                                               Iterator<Map.Entry<String, Object>> remainingConsumptionMappings,
-                                               Handler<AsyncResult<Boolean>> resultHandler) {
-        if (remainingConsumptionMappings.hasNext()) {
-            final Map.Entry<String, Object> entry = remainingConsumptionMappings.next();
-            fetchUserId(connection, entry.getKey())
-                    .onSuccess(buyerId -> {
-                        if (buyerId != null) {
-                            connection.updateWithParams(SQL_CREATE_PURCHASE_MAPPINGS,
-                                    new JsonArray()
-                                            .add(purchaseId)
-                                            .add(buyerId)
-                                            .add(entry.getValue()),
-                                    asyncUpdate -> {
-                                        if (asyncUpdate.succeeded()) {
-                                            log.debug("Creating purchase mapping for purchase id {} and consumer {} has succeeded.",
-                                                    purchaseId, entry.getKey());
-                                            createPurchaseMappings(connection, purchaseId,
-                                                    remainingConsumptionMappings, resultHandler);
-                                        } else {
-                                            resultHandler.handle(Future.failedFuture(asyncUpdate.cause()));
-                                        }
-                                    });
-                        } else {
-                            log.error("Creating purchase mapping for purchase id {} unknown consumer {} has failed.",
-                                    purchaseId, entry.getKey());
-                            resultHandler.handle(Future.succeededFuture(false));
-                        }
-                    })
-                    .onFailure(throwable -> resultHandler.handle(Future.failedFuture(throwable)));
-        } else {
-            log.info("Leaving last iteration");
-            resultHandler.handle(Future.succeededFuture(true));
-        }
+    private static Future<Map<Long, Integer>> extractConsumptionMappings(final SQLConnection connection,
+                                                                         final long purchaseId,
+                                                                         final JsonObject mappings) {
+        Promise<Map<Long, Integer>> mappingPromise = Promise.promise();
+        Iterator<Map.Entry<String, Integer>> iterator = mappings.stream()
+                .map(entry -> Map.entry(entry.getKey(), (Integer) entry.getValue()))
+                .iterator();
+        extractConsumptionMappings(connection, purchaseId, Stream.empty(), iterator)
+                .onComplete(asyncEntry -> {
+                    if (asyncEntry.succeeded()) {
+                        mappingPromise.complete(asyncEntry.result().getValue());
+                    } else {
+                        mappingPromise.fail(asyncEntry.cause());
+                    }
+                });
+        return mappingPromise.future();
     }
 
-    private Future<Long> fetchUserId(final String username) {
-        Promise<Long> promise = Promise.promise();
-        jdbcClient.getConnection(asyncConnection -> {
-            if (asyncConnection.succeeded()) {
-                fetchUserId(asyncConnection.result(), username)
-                        .onSuccess(promise::complete)
-                        .onFailure(promise::fail);
-            } else {
-                promise.fail(asyncConnection.cause());
-            }
-        });
+    private static Future<Map<Long, Integer>> fetchConsumptionMappings(final SQLConnection connection,
+                                                                       final long purchaseId) {
+        Promise<Map<Long, Integer>> promise = Promise.promise();
+        connection.queryWithParams(SQL_GET_PURCHASE_MAPPINGS, new JsonArray().add(purchaseId),
+                asyncMappings -> {
+                    if (asyncMappings.succeeded()) {
+                        final Map<Long, Integer> mappings = asyncMappings.result().getResults()
+                                .stream()
+                                .collect(Collectors.toMap(
+                                        element -> element.getLong(0),
+                                        element -> element.getInteger(1)
+                                ));
+                        log.debug("Fetching purchase mappings for purchase with id {} succeeded.",
+                                purchaseId);
+
+                        promise.complete(mappings);
+                    } else {
+                        log.error("Fetching purchase mappings for purchase with id {} failed.",
+                                purchaseId, asyncMappings.cause());
+                        promise.fail(asyncMappings.cause());
+                    }
+                });
+        return promise.future();
+    }
+
+    private static Future<Void> createConsumptionMappings(final SQLConnection connection,
+                                                          final long purchaseId,
+                                                          Iterator<Map.Entry<Long, Integer>> missingMappings) {
+        Promise<Void> promise = Promise.promise();
+        if (missingMappings.hasNext()) {
+            final Map.Entry<Long, Integer> newMapping = missingMappings.next();
+            final JsonArray queryParams = new JsonArray()
+                    .add(purchaseId)
+                    .add(newMapping.getKey())
+                    .add(newMapping.getValue());
+
+            log.debug("Creating consumption mapping for purchase with id {} and user with id {}...",
+                    purchaseId, newMapping.getKey());
+
+            connection.updateWithParams(SQL_CREATE_PURCHASE_MAPPING, queryParams, asyncUpdate -> {
+                if (asyncUpdate.succeeded()) {
+                    createConsumptionMappings(connection, purchaseId, missingMappings)
+                            .onComplete(promise);
+                } else {
+                    log.error("Creating consumption mapping for purchase with id {} failed.",
+                            purchaseId, asyncUpdate.cause());
+                    promise.fail(asyncUpdate.cause());
+                }
+            });
+        } else {
+            promise.complete();
+        }
+        return promise.future();
+    }
+
+    private static Future<Void> updateConsumptionMappings(final SQLConnection connection,
+                                                          final long purchaseId,
+                                                          Iterator<Map.Entry<Long, Integer>> changedMappings) {
+        Promise<Void> promise = Promise.promise();
+        if (changedMappings.hasNext()) {
+            final Map.Entry<Long, Integer> newMapping = changedMappings.next();
+            final JsonArray queryParams = new JsonArray()
+                    .add(newMapping.getValue())
+                    .add(purchaseId)
+                    .add(newMapping.getKey());
+
+            log.debug("Updating consumption mapping for purchase with id {} and user with id {}...",
+                    purchaseId, newMapping.getKey());
+
+            connection.updateWithParams(SQL_UPDATE_PURCHASE_MAPPING, queryParams, asyncUpdate -> {
+                if (asyncUpdate.succeeded()) {
+                    updateConsumptionMappings(connection, purchaseId, changedMappings)
+                            .onComplete(promise);
+                } else {
+                    log.error("Updating consumption mapping for purchase with id {} failed.",
+                            purchaseId, asyncUpdate.cause());
+                    promise.fail(asyncUpdate.cause());
+                }
+            });
+        } else {
+            promise.complete();
+        }
+        return promise.future();
+    }
+
+    private static Future<Void> removeConsumptionMappings(final SQLConnection connection,
+                                                          final long purchaseId,
+                                                          Iterator<Long> superfluousBuyerIds) {
+        Promise<Void> promise = Promise.promise();
+        if (superfluousBuyerIds.hasNext()) {
+            final long buyerId = superfluousBuyerIds.next();
+            final JsonArray queryParams = new JsonArray()
+                    .add(purchaseId)
+                    .add(buyerId);
+
+            log.debug("Removing consumption mapping for purchase with id {} and user with id {}...",
+                    purchaseId, buyerId);
+
+            connection.updateWithParams(SQL_DELETE_PURCHASE_MAPPING, queryParams, asyncUpdate -> {
+                if (asyncUpdate.succeeded()) {
+                    removeConsumptionMappings(connection, purchaseId, superfluousBuyerIds)
+                            .onComplete(promise);
+                } else {
+                    log.error("Removing consumption mapping for purchase with id {} failed.",
+                            purchaseId, asyncUpdate.cause());
+                    promise.fail(asyncUpdate.cause());
+                }
+            });
+        } else {
+            promise.complete();
+        }
         return promise.future();
     }
 
@@ -273,8 +534,10 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
             if (asyncFetch.succeeded() && asyncFetch.result() != null) {
                 promise.complete(asyncFetch.result().getLong(0));
             } else if (asyncFetch.result() == null) {
+                log.warn("Fetching user, name {} yielded no matching results.", username);
                 promise.complete(null);
             } else {
+                log.error("Fetching user, name {} failed.", username, asyncFetch.cause());
                 promise.fail(asyncFetch.cause());
             }
         });

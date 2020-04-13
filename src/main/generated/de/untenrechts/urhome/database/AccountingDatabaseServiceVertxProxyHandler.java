@@ -141,6 +141,18 @@ public class AccountingDatabaseServiceVertxProxyHandler extends ProxyHandler {
                         HelperUtils.createHandler(msg));
           break;
         }
+        case "updatePurchase": {
+          service.updatePurchase(json.getValue("id") == null ? null : (json.getLong("id").longValue()),
+                        (java.lang.String)json.getValue("buyer"),
+                        (java.lang.String)json.getValue("market"),
+                        (java.lang.String)json.getValue("dateBought"),
+                        (java.lang.String)json.getValue("productCategory"),
+                        (java.lang.String)json.getValue("productName"),
+                        json.getValue("price") == null ? null : (json.getDouble("price").floatValue()),
+                        (io.vertx.core.json.JsonObject)json.getValue("consumptionMappings"),
+                        HelperUtils.createHandler(msg));
+          break;
+        }
         default: throw new IllegalStateException("Invalid action: " + action);
       }
     } catch (Throwable t) {

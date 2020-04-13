@@ -148,4 +148,31 @@ public class AccountingDatabaseServiceVertxEBProxy implements AccountingDatabase
     });
     return this;
   }
+  @Override
+  public  AccountingDatabaseService updatePurchase(long id, String buyer, String market, String dateBought, String productCategory, String productName, Float price, JsonObject consumptionMappings, Handler<AsyncResult<Boolean>> resultHandler){
+    if (closed) {
+      resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));
+      return this;
+    }
+    JsonObject _json = new JsonObject();
+    _json.put("id", id);
+    _json.put("buyer", buyer);
+    _json.put("market", market);
+    _json.put("dateBought", dateBought);
+    _json.put("productCategory", productCategory);
+    _json.put("productName", productName);
+    _json.put("price", price);
+    _json.put("consumptionMappings", consumptionMappings);
+
+    DeliveryOptions _deliveryOptions = (_options != null) ? new DeliveryOptions(_options) : new DeliveryOptions();
+    _deliveryOptions.addHeader("action", "updatePurchase");
+    _vertx.eventBus().<Boolean>request(_address, _json, _deliveryOptions, res -> {
+      if (res.failed()) {
+        resultHandler.handle(Future.failedFuture(res.cause()));
+      } else {
+        resultHandler.handle(Future.succeededFuture(res.result().body()));
+      }
+    });
+    return this;
+  }
 }
