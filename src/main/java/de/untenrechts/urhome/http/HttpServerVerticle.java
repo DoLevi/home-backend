@@ -167,19 +167,15 @@ public class HttpServerVerticle extends AbstractVerticle {
         List<RequestParameter> mappingShares
                 = params.queryParameter("consumptionMappingShares").getArray();
 
-        final boolean noMappingUpdate = mappingUsernames == null && mappingShares == null;
         final boolean validMappingUpdate = mappingUsernames != null
                 && mappingShares != null
                 && mappingUsernames.size() == mappingShares.size();
 
-        if (noMappingUpdate || validMappingUpdate) {
-            JsonObject consumptionMappings = null;
-            if (mappingUsernames != null) {
-                consumptionMappings = new JsonObject();
-                for (int i = 0; i <  mappingUsernames.size(); ++i) {
-                    consumptionMappings.put(mappingUsernames.get(i).getString(),
-                            mappingShares.get(i).getFloat());
-                }
+        if (validMappingUpdate) {
+            JsonObject consumptionMappings = new JsonObject();
+            for (int i = 0; i <  mappingUsernames.size(); ++i) {
+                consumptionMappings.put(mappingUsernames.get(i).getString(),
+                        mappingShares.get(i).getFloat());
             }
 
             accountingDbService.updatePurchase(
@@ -207,8 +203,8 @@ public class HttpServerVerticle extends AbstractVerticle {
             ctx.response()
                     .setStatusCode(400)
                     .putHeader("Content-Type", "text/plain")
-                    .end("Either both query parameters (mappingUsernames, mappingShare) with " +
-                            "the same length or none of them must be present.");
+                    .end("Either both query parameters (mappingUsernames, mappingShare - same " +
+                            "length) or none of them must be present.");
         }
     }
 
@@ -237,13 +233,13 @@ public class HttpServerVerticle extends AbstractVerticle {
     private static HTTPRequestValidationHandler updatePurchaseValidationHandler() {
         return HTTPRequestValidationHandler.create()
                 .addPathParam("id", ParameterType.INT)
-                .addQueryParam("buyer", ParameterType.GENERIC_STRING, false)
-                .addQueryParam("market", ParameterType.GENERIC_STRING, false)
-                .addQueryParam("dateBought", ParameterType.GENERIC_STRING, false)
-                .addQueryParam("productCategory", ParameterType.GENERIC_STRING, false)
-                .addQueryParam("productName", ParameterType.GENERIC_STRING, false)
-                .addQueryParam("price", ParameterType.FLOAT, false)
-                .addQueryParamsArray("consumptionMappingUsernames", ParameterType.GENERIC_STRING, false)
-                .addQueryParamsArray("consumptionMappingShare", ParameterType.FLOAT, false);
+                .addQueryParam("buyer", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("market", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("dateBought", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("productCategory", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("productName", ParameterType.GENERIC_STRING, true)
+                .addQueryParam("price", ParameterType.FLOAT, true)
+                .addQueryParamsArray("consumptionMappingUsernames", ParameterType.GENERIC_STRING, true)
+                .addQueryParamsArray("consumptionMappingShare", ParameterType.FLOAT, true);
     }
 }
