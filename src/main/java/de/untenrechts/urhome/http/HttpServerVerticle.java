@@ -10,14 +10,15 @@ import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.api.RequestParameter;
 import io.vertx.ext.web.api.RequestParameters;
-import io.vertx.ext.web.api.validation.CustomValidator;
 import io.vertx.ext.web.api.validation.HTTPRequestValidationHandler;
 import io.vertx.ext.web.api.validation.ParameterType;
-import io.vertx.ext.web.api.validation.ValidationException;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static de.untenrechts.urhome.MainVerticle.URHOME_DB_QUEUE;
 
@@ -167,19 +168,15 @@ public class HttpServerVerticle extends AbstractVerticle {
         List<RequestParameter> mappingShares
                 = params.queryParameter("consumptionMappingShares").getArray();
 
-        final boolean validMappingUpdate = mappingUsernames != null
-                && mappingShares != null
-                && mappingUsernames.size() == mappingShares.size();
-
-        if (validMappingUpdate) {
+        if (mappingUsernames.size() == mappingShares.size()) {
             JsonObject consumptionMappings = new JsonObject();
             for (int i = 0; i <  mappingUsernames.size(); ++i) {
                 consumptionMappings.put(mappingUsernames.get(i).getString(),
-                        mappingShares.get(i).getFloat());
+                        mappingShares.get(i).getInteger());
             }
 
             accountingDbService.updatePurchase(
-                    params.pathParameter("id").getLong(),
+                    params.pathParameter("id").getInteger(),
                     params.queryParameter("buyer").getString(),
                     params.queryParameter("market").getString(),
                     params.queryParameter("dateBought").getString(),
@@ -240,6 +237,6 @@ public class HttpServerVerticle extends AbstractVerticle {
                 .addQueryParam("productName", ParameterType.GENERIC_STRING, true)
                 .addQueryParam("price", ParameterType.FLOAT, true)
                 .addQueryParamsArray("consumptionMappingUsernames", ParameterType.GENERIC_STRING, true)
-                .addQueryParamsArray("consumptionMappingShare", ParameterType.FLOAT, true);
+                .addQueryParamsArray("consumptionMappingShares", ParameterType.INT, true);
     }
 }
