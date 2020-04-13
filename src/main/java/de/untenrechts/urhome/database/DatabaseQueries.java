@@ -10,7 +10,7 @@ public class DatabaseQueries {
     public static final String SQL_GET_ALL_USERS = "SELECT username FROM users";
     public static final String SQL_CREATE_PURCHASE = "INSERT INTO purchases " +
             "VALUES (DEFAULT, ?, ?, ?, ?, ?, ?) ";
-    public static final String SQL_GET_PURCHASES = "SELECT p.date_bought, p.product_name, p.price * m.consumption_share / s.share_sum AS price " +
+    public static final String SQL_GET_PURCHASES = "SELECT p.id, p.date_bought, p.product_name, p.price * m.consumption_share / s.share_sum AS price " +
             "FROM purchases p " +
             "JOIN purchase_mapping m ON p.id = m.purchase_id " +
             "JOIN users u ON m.user_id = u.id " +

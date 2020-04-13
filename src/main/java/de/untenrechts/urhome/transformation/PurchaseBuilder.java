@@ -9,6 +9,7 @@ public class PurchaseBuilder {
 
     public static JsonObject buildLightPurchase(final JsonObject purchase) {
         return new JsonObject()
+                .put("id", purchase.getInteger("id"))
                 .put("dateBought", purchase.getString("date_bought"))
                 .put("productName", purchase.getString("product_name"))
                 .put("price", purchase.getFloat("price"));
