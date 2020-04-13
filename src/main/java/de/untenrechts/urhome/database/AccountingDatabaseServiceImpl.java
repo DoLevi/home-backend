@@ -66,7 +66,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                 Future<Boolean> createPurchaseSteps = fetchUserId(connection, buyer)
                         .compose(buyerId -> createPurchase(connection, buyerId, market, dateBought, productCategory, productName, price))
                         .compose(purchaseId -> extractConsumptionMappings(connection, purchaseId, Stream.empty(), consumptionMappingsMap.entrySet().iterator()))
-                        .compose(mappings -> createConsumptionMappings(connection, mappings.getKey(), mappings.getValue()));
+                        .compose(mappings -> createConsumptionMappings(connection, mappings.getT(), mappings.getR()));
 
                 // Clean everything up
                 createPurchaseSteps
@@ -132,11 +132,11 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         return promise.future();
     }
 
-    private static Future<Map.Entry<Long, Map<Long, Integer>>> extractConsumptionMappings(final SQLConnection connection,
-                                                                                          final Long purchaseId,
-                                                                                          Stream<Map.Entry<Long, Integer>> extractedMappings,
-                                                                                          final Iterator<Map.Entry<String, Integer>> rawMappings) {
-        Promise<Map.Entry<Long, Map<Long, Integer>>> promise = Promise.promise();
+    private static Future<Tuple<Long, Map<Long, Integer>>> extractConsumptionMappings(final SQLConnection connection,
+                                                                                      final Long purchaseId,
+                                                                                      Stream<Map.Entry<Long, Integer>> extractedMappings,
+                                                                                      final Iterator<Map.Entry<String, Integer>> rawMappings) {
+        Promise<Tuple<Long, Map<Long, Integer>>> promise = Promise.promise();
         if (purchaseId != null) {
             if (rawMappings.hasNext()) {
                 final Map.Entry<String, Integer> rawMapping = rawMappings.next();
@@ -161,7 +161,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                 final Map<Long, Integer> result = extractedMappings
                         .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-                promise.complete(Map.entry(purchaseId, result));
+                promise.complete(new Tuple<>(purchaseId, result));
             }
         } else {
             promise.complete();
@@ -406,7 +406,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         extractConsumptionMappings(connection, purchaseId, Stream.empty(), iterator)
                 .onComplete(asyncEntry -> {
                     if (asyncEntry.succeeded()) {
-                        mappingPromise.complete(asyncEntry.result().getValue());
+                        mappingPromise.complete(asyncEntry.result().getR());
                     } else {
                         mappingPromise.fail(asyncEntry.cause());
                     }
