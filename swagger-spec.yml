@@ -1,0 +1,293 @@
+swagger: "2.0"
+info:
+  title: URHome Accounting Backend
+  version: 1.0.1
+paths:
+  /user/all:
+    get:
+      tags:
+        - user
+      summary: Get a list of all available usernames.
+      operationId: getAllUsernames
+      produces:
+        - application/json
+      responses:
+        200:
+          description: The request has been processed successfully.
+          schema:
+            type: object
+            properties:
+              usernames:
+                type: array
+                items:
+                  type: string
+        500:
+          description: An internal server error has occurred.
+  /purchase:
+    post:
+      tags:
+        - purchase
+      summary: Create a purchase.
+      operationId: createPurchase
+      parameters:
+        - name: buyer
+          in: query
+          description: Username of the buyer for this purchase
+          required: true
+          type: string
+        - name: market
+          in: query
+          description: Market where the purchase has been bought
+          required: true
+          type: string
+        - name: dateBought
+          in: query
+          description: Date the purchase has been bought
+          required: true
+          type: string
+        - name: productCategory
+          in: query
+          description: Category the bought product belongs to
+          required: true
+          type: string
+          enum:
+            - foodAndBeverages
+            - hygiene
+            - entertainment
+            - furniture
+            - primaryCare
+            - other
+        - name: productName
+          in: query
+          description: Name of the bought product
+          required: true
+          type: string
+        - name: price
+          in: query
+          description: Price of the purchase
+          required: true
+          type: number
+          multipleOf: 0.01
+        - name: consumptionMappingUsernames
+          in: query
+          description: Usernames of the users responsible for the mapping matching the ID on the same index.
+          required: true
+          type: array
+          items:
+            type: string
+        - name: consumptionMappingShares
+          in: query
+          description: Share for the mapping matching the ID on the same index.
+          required: true
+          type: array
+          items:
+            multipleOf: 1
+            type: integer
+      responses:
+        200:
+          description: The request has been processed successfully.
+        400:
+          description: The format of the request is invalid.
+        404:
+          description: The username of the buyer is unknown.
+        500:
+          description: An internal server error has occurred.
+  /purchase/all/{username}:
+    get:
+      tags:
+        - purchase
+      summary: Get a list of all purchases involving a user.
+      operationId: getPurchasesByUsername
+      produces:
+        - application/json
+      parameters:
+        - name: username
+          in: path
+          description: Username of the involved user.
+          required: true
+          type: string
+        - name: startDate
+          in: query
+          description: Filter result by start date (inclusive). Empty means unbound.
+          required: false
+          type: string
+          format: date
+        - name: endDate
+          in: query
+          description: Filter result by end date (inclusive). Empty means unbound.
+          required: false
+          type: string
+          format: date
+      responses:
+        200:
+          description: The request has been processed successfully.
+          schema:
+            $ref: '#/definitions/Summary'
+        404:
+          description: The given username is unknown.
+        500:
+          description: An internal server error has occurred.
+  /purchase/{id}:
+    get:
+      tags:
+        - purchase
+      summary: Get a purchase by ID.
+      operationId: getPurchaseById
+      parameters:
+        - name: id
+          in: path
+          description: ID of the purchase to get
+          required: true
+          type: integer
+      responses:
+        200:
+          description: The request has been processed successfully.
+          schema:
+            $ref: '#/definitions/PurchaseFull'
+        404:
+          description: The given ID is unknown.
+        500:
+          description: An internal server error has occurred.
+    put:
+      tags:
+        - purchase
+      summary: Update a purchase.
+      operationId: updatePurchase
+      parameters:
+        - name: id
+          in: path
+          description: ID of the purchase to update
+          required: true
+          type: integer
+        - name: buyer
+          in: query
+          description: Username of the buyer for this product
+          required: true
+          type: string
+        - name: market
+          in: query
+          description: Market where the purchase has been bought
+          required: true
+          type: string
+        - name: dateBought
+          in: query
+          description: Date the purchase has been bought
+          required: true
+          type: string
+        - name: productCategory
+          in: query
+          description: Category the bought product belongs to
+          required: true
+          type: string
+          enum:
+            - foodAndBeverages
+            - hygiene
+            - entertainment
+            - furniture
+            - primaryCare
+            - other
+        - name: productName
+          in: query
+          description: Name of the bought product
+          required: true
+          type: string
+        - name: price
+          in: query
+          description: Price of the purchase
+          required: true
+          type: number
+          multipleOf: 0.01
+        - name: consumptionMappingUsernames
+          in: query
+          description: Usernames of the users responsible for the mapping matching the ID on the same index
+          required: true
+          type: array
+          items:
+            type: string
+        - name: consumptionMappingShares
+          in: query
+          description: Share for the mapping matching the ID on the same index.
+          required: true
+          type: array
+          items:
+            multipleOf: 1
+            type: integer
+      responses:
+        200:
+          description: The request has been processed successfully.
+        400:
+          description: The format of the request is invalid.
+        404:
+          description: The given ID is unknown.
+        500:
+          description: An internal server error has occurred.
+
+definitions:
+  Summary:
+    type: object
+    properties:
+      purchases:
+        type: array
+        items:
+          $ref: '#/definitions/PurchaseLight'
+      deltas:
+        type: array
+        items:
+          type: object
+          properties:
+            username:
+              type: string
+            delta:
+              type: number
+  PurchaseLight:
+    type: object
+    properties:
+      id:
+        type: integer
+      dateBought:
+        type: string
+        format: date
+      productName:
+        type: string
+      price:
+        multipleOf: 0.01
+        type: number
+  PurchaseFull:
+    type: object
+    properties:
+      id:
+        type: integer
+      market:
+        type: string
+      dateBought:
+        type: string
+        format: date
+      productCategory:
+        type: string
+        enum:
+          - foodAndBeverages
+          - hygiene
+          - entertainment
+          - furniture
+          - primaryCare
+          - other
+      productName:
+        type: string
+      price:
+        multipleOf: 0.01
+        type: number
+      buyer:
+        type: string
+      consumptionMappings:
+        type: array
+        items:
+          $ref: '#/definitions/ConsumptionMapping'
+  ConsumptionMapping:
+    type: object
+    properties:
+      username:
+        type: string
+      share:
+        multipleOf: 1
+        type: integer
+

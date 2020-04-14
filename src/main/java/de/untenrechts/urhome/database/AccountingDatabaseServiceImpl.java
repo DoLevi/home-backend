@@ -250,23 +250,25 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         return promise.future();
     }
 
-    private static Future<JsonObject> fetchDeltas(final SQLConnection connection,
+    private static Future<JsonArray> fetchDeltas(final SQLConnection connection,
                                                   final String user) {
-        Promise<JsonObject> promise = Promise.promise();
+        Promise<JsonArray> promise = Promise.promise();
 
         final JsonArray queryParams = new JsonArray().add(user).add(user);
 
         connection.queryWithParams(SQL_GET_DELTAS, queryParams, asyncFetch -> {
             if (asyncFetch.succeeded()) {
-                final Map<String, Object> debtsAndClaims = asyncFetch.result().getRows().stream()
+                final List<JsonObject> debtsAndClaims = asyncFetch.result().getRows().stream()
                         .reduce(new HashMap<>(),
                                 AccountingDatabaseServiceImpl::reduceDeltaRow,
                                 AccountingDatabaseServiceImpl::mergeDeltaRows)
                         .entrySet().stream()
-                        .collect(Collectors.toMap(entry
-                                -> Objects.toString(entry.getKey()), Map.Entry::getValue));
+                        .map(deltaEntry -> new JsonObject()
+                                .put("username", deltaEntry.getKey())
+                                .put("delta", deltaEntry.getValue()))
+                        .collect(Collectors.toList());
 
-                promise.complete(new JsonObject(debtsAndClaims));
+                promise.complete(new JsonArray(debtsAndClaims));
             } else {
                 log.error("Fetching expense deltas, user {} failed.", user, asyncFetch.cause());
                 promise.fail(asyncFetch.cause());
@@ -281,7 +283,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         final String consumer = current.getString("consumer");
         final float delta = current.getFloat("delta");
 
-        previous.compute(buyer, (claimerId, claim) -> claim == null ? - delta : claim - delta);
+        previous.compute(buyer, (claimerId, claim) -> claim == null ? -delta : claim - delta);
         previous.compute(consumer, (key, debt) -> debt == null ? delta : debt + delta);
 
         return previous;
