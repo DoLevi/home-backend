@@ -1,44 +1,46 @@
 package de.untenrechts.urhome.database;
 
+import lombok.extern.slf4j.Slf4j;
+
+import java.io.IOException;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Objects;
+
+@Slf4j
 public class DatabaseQueries {
 
-    public static final String SQL_TEST_CONNECTION = "SELECT 1 " +
-            "FROM purchase_mapping pm " +
-            "JOIN purchases p ON pm.purchase_id = p.id " +
-            "JOIN users u ON pm.user_id = u.id";
-    public static final String SQL_GET_USER_ID = "SELECT id FROM users WHERE username = ?";
-    public static final String SQL_GET_ALL_USERS = "SELECT username FROM users";
-    public static final String SQL_CREATE_PURCHASE = "INSERT INTO purchases " +
-            "VALUES (DEFAULT, ?, ?, ?, ?, ?, ?) ";
-    public static final String SQL_GET_PURCHASES = "SELECT p.id, p.date_bought, p.product_name, p.price * m.consumption_share / s.share_sum AS price " +
-            "FROM purchases p " +
-            "JOIN purchase_mapping m ON p.id = m.purchase_id " +
-            "JOIN users u ON m.user_id = u.id " +
-            "JOIN (SELECT p.id, SUM(m.consumption_share) as share_sum " +
-            "    FROM purchases p " +
-            "    JOIN purchase_mapping m ON p.id = m.purchase_id " +
-            "    GROUP BY p.id) s ON p.id = s.id " +
-            "WHERE u.id = ?";
-    public static final String SQL_GET_PURCHASE = "SELECT p.id, p.market, p.date_bought, p.product_category, p.product_name, p.price, u.username, json_agg(mapping_json) " +
-            "FROM purchases p " +
-            "JOIN users u ON p.buyer_user_id = u.id " +
-            "JOIN (SELECT m.purchase_id, json_build_object('id', m.id, 'username', u.username, 'consumption_share', m.consumption_share) AS mapping_json " +
-            "    FROM purchase_mapping m " +
-            "    JOIN users u ON m.user_id = u.id " +
-            "    WHERE m.purchase_id = ?) m ON p.id = m.purchase_id " +
-            "WHERE p.id = ? " +
-            "GROUP BY p.id, p.market, p.date_bought, p.product_category, p.product_name, p.price, u.username";
-    public static final String SQL_CREATE_PURCHASE_MAPPING = "INSERT INTO purchase_mapping " +
-            "VALUES (DEFAULT, ?, ?, ?) ";
-    public static final String SQL_GET_PURCHASE_MAPPINGS = "SELECT user_id, consumption_share " +
-            "FROM purchase_mapping " +
-            "WHERE purchase_id = ?";
-    public static final String SQL_UPDATE_PURCHASE = "UPDATE purchases " +
-            "SET market = ?, date_bought = ?, product_category = ?, product_name = ?, price = ?, buyer_user_id = ?" +
-            "WHERE id = ?";
-    public static final String SQL_UPDATE_PURCHASE_MAPPING = "UPDATE purchase_mapping " +
-            "SET consumption_share = ? " +
-            "WHERE purchase_id = ? AND user_id = ?";
-    public static final String SQL_DELETE_PURCHASE_MAPPING = "DELETE FROM purchase_mapping " +
-            "WHERE purchase_id = ? AND user_id = ?";
+    public static final String SQL_TEST_CONNECTION = readOrRuntimeException("sql/test_connection.sql");
+
+    public static final String SQL_GET_ALL_USERS = readOrRuntimeException("sql/get_all_users.sql");
+    public static final String SQL_GET_USER_ID = readOrRuntimeException("sql/get_user_id.sql");
+
+    public static final String SQL_CREATE_PURCHASE = readOrRuntimeException("sql/create_purchase.sql");
+    public static final String SQL_GET_PURCHASES = readOrRuntimeException("sql/get_purchases.sql");
+    public static final String SQL_GET_PURCHASE = readOrRuntimeException("sql/get_purchase.sql");
+    public static final String SQL_GET_DELTAS = readOrRuntimeException("sql/get_deltas.sql");
+
+    public static final String SQL_CREATE_PURCHASE_MAPPING = readOrRuntimeException("sql/create_purchase_mapping.sql");
+    public static final String SQL_GET_PURCHASE_MAPPINGS = readOrRuntimeException("sql/get_purchase_mappings.sql");
+    public static final String SQL_UPDATE_PURCHASE = readOrRuntimeException("sql/update_purchase.sql");
+    public static final String SQL_UPDATE_PURCHASE_MAPPING = readOrRuntimeException("sql/update_purchase_mapping.sql");
+    public static final String SQL_DELETE_PURCHASE_MAPPING = readOrRuntimeException("sql/delete_purchase_mapping.sql");
+
+    private static String readOrRuntimeException(final String pathString) {
+        final URL fileUrl = DatabaseQueries.class.getClassLoader().getResource(pathString);
+        if (fileUrl != null) {
+            try {
+                return Files.readString(Path.of(fileUrl.toURI()));
+            } catch (URISyntaxException | IOException e) {
+                log.error("Unable to find SQL query file.", e);
+                throw new IllegalStateException(e);
+            }
+        } else {
+            final String message = String.format("File %s not found.", pathString);
+            log.error(message);
+            throw new IllegalStateException(message);
+        }
+    }
 }

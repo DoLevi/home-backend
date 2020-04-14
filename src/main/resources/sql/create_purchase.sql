@@ -1,0 +1,2 @@
+INSERT INTO purchases
+VALUES (DEFAULT, ?, ?, ?, ?, ?, ?)
