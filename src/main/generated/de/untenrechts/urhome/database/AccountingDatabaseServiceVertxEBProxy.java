@@ -109,7 +109,7 @@ public class AccountingDatabaseServiceVertxEBProxy implements AccountingDatabase
     return this;
   }
   @Override
-  public  AccountingDatabaseService fetchPurchasesForUser(String username, Handler<AsyncResult<JsonArray>> resultHandler){
+  public  AccountingDatabaseService fetchPurchasesForUser(String username, Handler<AsyncResult<JsonObject>> resultHandler){
     if (closed) {
       resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));
       return this;
@@ -119,7 +119,7 @@ public class AccountingDatabaseServiceVertxEBProxy implements AccountingDatabase
 
     DeliveryOptions _deliveryOptions = (_options != null) ? new DeliveryOptions(_options) : new DeliveryOptions();
     _deliveryOptions.addHeader("action", "fetchPurchasesForUser");
-    _vertx.eventBus().<JsonArray>request(_address, _json, _deliveryOptions, res -> {
+    _vertx.eventBus().<JsonObject>request(_address, _json, _deliveryOptions, res -> {
       if (res.failed()) {
         resultHandler.handle(Future.failedFuture(res.cause()));
       } else {

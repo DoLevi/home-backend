@@ -124,7 +124,7 @@ public class HttpServerVerticle extends AbstractVerticle {
         final String username = ctx.request().getParam("username");
         accountingDbService.fetchPurchasesForUser(username, asyncReply -> {
             if (asyncReply.succeeded()) {
-                final JsonArray result = asyncReply.result();
+                final JsonObject result = asyncReply.result();
                 if (result != null) {
                     ctx.response()
                             .putHeader("Content-Type", "application/json")

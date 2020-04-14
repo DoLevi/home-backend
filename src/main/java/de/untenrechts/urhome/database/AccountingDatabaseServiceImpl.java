@@ -203,12 +203,21 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     }
 
     @Override
-    public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonArray>> resultHandler) {
+    public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonObject>> resultHandler) {
         jdbcClient.getConnection(asyncConnection -> {
             if (asyncConnection.succeeded()) {
                 final SQLConnection connection = asyncConnection.result();
                 fetchUserId(connection, username)
-                        .compose(userId -> fetchPurchasesForUser(connection, userId))
+                        .compose(userId -> fetchLightPurchasesForUser(connection, userId))
+                        .compose(purchases -> {
+                            Promise<JsonObject> promise = Promise.promise();
+                            fetchDeltas(connection, username)
+                                    .onSuccess(deltas -> promise.complete(new JsonObject()
+                                            .put("purchases", purchases)
+                                            .put("summary", deltas)))
+                                    .onFailure(promise::fail);
+                            return promise.future();
+                        })
                         .onComplete(resultHandler);
             } else {
                 resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
@@ -217,8 +226,8 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         return this;
     }
 
-    private static Future<JsonArray> fetchPurchasesForUser(final SQLConnection connection,
-                                                           final Long userId) {
+    private static Future<JsonArray> fetchLightPurchasesForUser(final SQLConnection connection,
+                                                                final Long userId) {
         Promise<JsonArray> promise = Promise.promise();
         if (userId != null) {
             final JsonArray queryParams = new JsonArray().add(userId);
@@ -226,10 +235,10 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
 
             connection.queryWithParams(SQL_GET_PURCHASES, queryParams, asyncFetch -> {
                 if (asyncFetch.succeeded()) {
-                    final JsonArray result = new JsonArray(asyncFetch.result().getRows().stream()
+                    final JsonArray purchases = new JsonArray(asyncFetch.result().getRows().stream()
                             .map(PurchaseBuilder::buildLightPurchase)
                             .collect(Collectors.toList()));
-                    promise.complete(result);
+                    promise.complete(purchases);
                 } else {
                     log.error("Fetching purchases for user, id {} failed.", userId);
                     promise.fail(asyncFetch.cause());
@@ -239,6 +248,52 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
             promise.complete(null);
         }
         return promise.future();
+    }
+
+    private static Future<JsonObject> fetchDeltas(final SQLConnection connection,
+                                                  final String user) {
+        Promise<JsonObject> promise = Promise.promise();
+
+        final JsonArray queryParams = new JsonArray().add(user).add(user);
+
+        connection.queryWithParams(SQL_GET_DELTAS, queryParams, asyncFetch -> {
+            if (asyncFetch.succeeded()) {
+                final Map<String, Object> debtsAndClaims = asyncFetch.result().getRows().stream()
+                        .reduce(new HashMap<>(),
+                                AccountingDatabaseServiceImpl::reduceDeltaRow,
+                                AccountingDatabaseServiceImpl::mergeDeltaRows)
+                        .entrySet().stream()
+                        .collect(Collectors.toMap(entry
+                                -> Objects.toString(entry.getKey()), Map.Entry::getValue));
+
+                promise.complete(new JsonObject(debtsAndClaims));
+            } else {
+                log.error("Fetching expense deltas, user {} failed.", user, asyncFetch.cause());
+                promise.fail(asyncFetch.cause());
+            }
+        });
+        return promise.future();
+    }
+
+    private static HashMap<String, Float> reduceDeltaRow(final HashMap<String, Float> previous,
+                                                         final JsonObject current) {
+        final String buyer = current.getString("buyer");
+        final String consumer = current.getString("consumer");
+        final float delta = current.getFloat("delta");
+
+        previous.compute(buyer, (claimerId, claim) -> claim == null ? - delta : claim - delta);
+        previous.compute(consumer, (key, debt) -> debt == null ? delta : debt + delta);
+
+        return previous;
+    }
+
+    private static HashMap<String, Float> mergeDeltaRows(final HashMap<String, Float> map1,
+                                                         final HashMap<String, Float> map2) {
+        for (Map.Entry<String, Float> entry : map2.entrySet()) {
+            map1.compute(entry.getKey(),
+                    (key, delta) -> delta == null ? entry.getValue() : delta + entry.getValue());
+        }
+        return map1;
     }
 
     @Override
