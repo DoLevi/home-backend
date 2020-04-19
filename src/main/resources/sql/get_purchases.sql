@@ -5,4 +5,5 @@ JOIN (SELECT p.id, SUM(m.consumption_share) as share_sum
     FROM purchases p
     JOIN purchase_mapping m ON p.id = m.purchase_id
     GROUP BY p.id) s ON p.id = s.id
-WHERE u.id = ?
+WHERE u.id = ? AND p.date_bought >= ? AND p.date_bought <= ?
+ORDER BY p.date_bought DESC

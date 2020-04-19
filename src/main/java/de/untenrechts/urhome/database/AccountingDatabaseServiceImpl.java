@@ -2,6 +2,7 @@ package de.untenrechts.urhome.database;
 
 import de.untenrechts.urhome.transformation.PurchaseBuilder;
 import de.untenrechts.urhome.transformation.Tuple;
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
@@ -12,6 +13,7 @@ import io.vertx.ext.jdbc.JDBCClient;
 import io.vertx.ext.sql.SQLConnection;
 import lombok.extern.slf4j.Slf4j;
 
+import java.time.LocalDate;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -74,7 +76,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                             if (bUpdate) {
                                 log.debug("Committing purchase creation, buyer {}...", buyer);
                                 connection.commit(vCommit -> {
-                                    connection.close();
+                                    connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
                                     if (vCommit.failed()) {
                                         log.error("Committing for purchase creation, buyer {} " +
                                                 "failed.", buyer, vCommit.cause());
@@ -85,7 +87,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                                 });
                             } else {
                                 log.error("Creating purchase, buyer {} failed.", buyer);
-                                connection.close();
+                                connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
                                 resultHandler.handle(Future.succeededFuture(false));
                             }
                         });
@@ -203,22 +205,28 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     }
 
     @Override
-    public AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonObject>> resultHandler) {
+    public AccountingDatabaseService fetchPurchasesForUser(final String username,
+                                                           final String start,
+                                                           final String end,
+                                                           Handler<AsyncResult<JsonObject>> resultHandler) {
         jdbcClient.getConnection(asyncConnection -> {
             if (asyncConnection.succeeded()) {
                 final SQLConnection connection = asyncConnection.result();
                 fetchUserId(connection, username)
-                        .compose(userId -> fetchLightPurchasesForUser(connection, userId))
+                        .compose(userId -> fetchLightPurchasesForUser(connection, userId, start, end))
                         .compose(purchases -> {
                             Promise<JsonObject> promise = Promise.promise();
-                            fetchDeltas(connection, username)
+                            fetchDeltas(connection, username, start, end)
                                     .onSuccess(deltas -> promise.complete(new JsonObject()
                                             .put("purchases", purchases)
                                             .put("summary", deltas)))
                                     .onFailure(promise::fail);
                             return promise.future();
                         })
-                        .onComplete(resultHandler);
+                        .onComplete(obj -> {
+                            connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
+                            resultHandler.handle(obj);
+                        });
             } else {
                 resultHandler.handle(Future.failedFuture(asyncConnection.cause()));
             }
@@ -227,11 +235,16 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     }
 
     private static Future<JsonArray> fetchLightPurchasesForUser(final SQLConnection connection,
-                                                                final Long userId) {
+                                                                final Long userId,
+                                                                final String start,
+                                                                final String end) {
         Promise<JsonArray> promise = Promise.promise();
         if (userId != null) {
-            final JsonArray queryParams = new JsonArray().add(userId);
-            log.debug("Fetching purchases for user, id {}...", userId);
+            final JsonArray queryParams = new JsonArray()
+                    .add(userId)
+                    .add(start)
+                    .add(end);
+            log.debug("Fetching purchases for user, id {}, start {}, end {}...", userId, start, end);
 
             connection.queryWithParams(SQL_GET_PURCHASES, queryParams, asyncFetch -> {
                 if (asyncFetch.succeeded()) {
@@ -240,7 +253,8 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                             .collect(Collectors.toList()));
                     promise.complete(purchases);
                 } else {
-                    log.error("Fetching purchases for user, id {} failed.", userId);
+                    log.error("Fetching purchases for user id {}, start {}, end {} failed.",
+                            userId, start, end);
                     promise.fail(asyncFetch.cause());
                 }
             });
@@ -251,16 +265,23 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
     }
 
     private static Future<JsonArray> fetchDeltas(final SQLConnection connection,
-                                                  final String user) {
+                                                 final String user,
+                                                 final String start,
+                                                 final String end) {
         Promise<JsonArray> promise = Promise.promise();
 
-        final JsonArray queryParams = new JsonArray().add(user).add(user);
+        final JsonArray queryParams = new JsonArray()
+                .add(user)
+                .add(user)
+                .add(start)
+                .add(end);
+        log.debug("Fetching expense deltas for user {}, start {}, end {}...", user, start, end);
 
         connection.queryWithParams(SQL_GET_DELTAS, queryParams, asyncFetch -> {
             if (asyncFetch.succeeded()) {
                 final List<JsonObject> debtsAndClaims = asyncFetch.result().getRows().stream()
                         .reduce(new HashMap<>(),
-                                AccountingDatabaseServiceImpl::reduceDeltaRow,
+                                (previous, current) -> reduceDeltaRow(user, previous, current),
                                 AccountingDatabaseServiceImpl::mergeDeltaRows)
                         .entrySet().stream()
                         .map(deltaEntry -> new JsonObject()
@@ -270,26 +291,32 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
 
                 promise.complete(new JsonArray(debtsAndClaims));
             } else {
-                log.error("Fetching expense deltas, user {} failed.", user, asyncFetch.cause());
+                log.error("Fetching expense deltas, user {}, start {}, end {} failed.",
+                        user, start, end, asyncFetch.cause());
                 promise.fail(asyncFetch.cause());
             }
         });
         return promise.future();
     }
 
-    private static HashMap<String, Float> reduceDeltaRow(final HashMap<String, Float> previous,
+    private static HashMap<String, Float> reduceDeltaRow(final String username,
+                                                         HashMap<String, Float> previous,
                                                          final JsonObject current) {
         final String buyer = current.getString("buyer");
         final String consumer = current.getString("consumer");
         final float delta = current.getFloat("delta");
 
-        previous.compute(buyer, (claimerId, claim) -> claim == null ? -delta : claim - delta);
-        previous.compute(consumer, (key, debt) -> debt == null ? delta : debt + delta);
+        if (!Objects.equals(username, buyer)) {
+            previous.compute(buyer, (claimerId, prevDelta)
+                    -> prevDelta == null ? - delta : prevDelta - delta);
+        }
+        previous.compute(consumer, (key, prevDelta)
+                -> prevDelta == null ? delta : prevDelta + delta);
 
         return previous;
     }
 
-    private static HashMap<String, Float> mergeDeltaRows(final HashMap<String, Float> map1,
+    private static HashMap<String, Float> mergeDeltaRows(HashMap<String, Float> map1,
                                                          final HashMap<String, Float> map2) {
         for (Map.Entry<String, Float> entry : map2.entrySet()) {
             map1.compute(entry.getKey(),
@@ -339,6 +366,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                 connection.setAutoCommit(false, v -> {
                     if (v.failed()) {
                         log.error("Disabling autocommit for purchase update, id {} failed.", id);
+                        connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
                         resultHandler.handle(Future.failedFuture(v.cause()));
                     }
                 });
@@ -353,7 +381,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                 // Clean everything up
                 updatePurchaseSteps
                         .onSuccess(vUpdate -> connection.commit(vCommit -> {
-                            connection.close();
+                            connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
                             if (vCommit.failed()) {
                                 log.error("Committing for purchase update, id {} failed.",
                                         id, vCommit.cause());
@@ -363,7 +391,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                             }
                         }))
                         .onFailure(thrown -> {
-                            connection.close();
+                            connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
                             log.error("Updating purchase, id {} failed.", id, thrown);
                             resultHandler.handle(Future.failedFuture(thrown));
                         });
@@ -610,7 +638,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                 log.debug("Establishing database connection has succeeded.");
 
                 connection.query(SQL_TEST_CONNECTION, test -> {
-                    connection.close();
+                    connection.close(AccountingDatabaseServiceImpl::handleConnectionClose);
                     if (test.succeeded()) {
                         log.info("Testing database connection has succeeded.");
                         promise.complete();
@@ -625,5 +653,11 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
             }
         });
         return promise.future();
+    }
+
+    private static void handleConnectionClose(final AsyncResult<Void> result) {
+        if (result.failed()) {
+            log.error("Closing connection failed.", result.cause());
+        }
     }
 }

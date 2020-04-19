@@ -109,13 +109,15 @@ public class AccountingDatabaseServiceVertxEBProxy implements AccountingDatabase
     return this;
   }
   @Override
-  public  AccountingDatabaseService fetchPurchasesForUser(String username, Handler<AsyncResult<JsonObject>> resultHandler){
+  public  AccountingDatabaseService fetchPurchasesForUser(String username, String start, String end, Handler<AsyncResult<JsonObject>> resultHandler){
     if (closed) {
       resultHandler.handle(Future.failedFuture(new IllegalStateException("Proxy is closed")));
       return this;
     }
     JsonObject _json = new JsonObject();
     _json.put("username", username);
+    _json.put("start", start);
+    _json.put("end", end);
 
     DeliveryOptions _deliveryOptions = (_options != null) ? new DeliveryOptions(_options) : new DeliveryOptions();
     _deliveryOptions.addHeader("action", "fetchPurchasesForUser");

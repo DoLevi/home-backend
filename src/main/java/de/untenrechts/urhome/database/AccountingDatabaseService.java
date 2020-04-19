@@ -2,6 +2,7 @@ package de.untenrechts.urhome.database;
 
 import io.vertx.codegen.annotations.Fluent;
 import io.vertx.codegen.annotations.GenIgnore;
+import io.vertx.codegen.annotations.Nullable;
 import io.vertx.codegen.annotations.ProxyGen;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Handler;
@@ -38,7 +39,10 @@ public interface AccountingDatabaseService {
     AccountingDatabaseService fetchAllUsers(Handler<AsyncResult<JsonArray>> resultHandler);
 
     @Fluent
-    AccountingDatabaseService fetchPurchasesForUser(final String username, Handler<AsyncResult<JsonObject>> resultHandler);
+    AccountingDatabaseService fetchPurchasesForUser(final String username,
+                                                    @Nullable final String start,
+                                                    @Nullable final String end,
+                                                    Handler<AsyncResult<JsonObject>> resultHandler);
 
     @Fluent
     AccountingDatabaseService fetchPurchase(long id, Handler<AsyncResult<JsonObject>> resultHandler);

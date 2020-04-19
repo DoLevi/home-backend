@@ -1,15 +1,8 @@
 package de.untenrechts.urhome.database;
 
-import lombok.extern.slf4j.Slf4j;
+import static de.untenrechts.urhome.Configuration.readOrRuntimeException;
 
-import java.io.IOException;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Objects;
 
-@Slf4j
 public class DatabaseQueries {
 
     public static final String SQL_TEST_CONNECTION = readOrRuntimeException("sql/test_connection.sql");
@@ -27,20 +20,4 @@ public class DatabaseQueries {
     public static final String SQL_UPDATE_PURCHASE = readOrRuntimeException("sql/update_purchase.sql");
     public static final String SQL_UPDATE_PURCHASE_MAPPING = readOrRuntimeException("sql/update_purchase_mapping.sql");
     public static final String SQL_DELETE_PURCHASE_MAPPING = readOrRuntimeException("sql/delete_purchase_mapping.sql");
-
-    private static String readOrRuntimeException(final String pathString) {
-        final URL fileUrl = DatabaseQueries.class.getClassLoader().getResource(pathString);
-        if (fileUrl != null) {
-            try {
-                return Files.readString(Path.of(fileUrl.toURI()));
-            } catch (URISyntaxException | IOException e) {
-                log.error("Unable to find SQL query file.", e);
-                throw new IllegalStateException(e);
-            }
-        } else {
-            final String message = String.format("File %s not found.", pathString);
-            log.error(message);
-            throw new IllegalStateException(message);
-        }
-    }
 }

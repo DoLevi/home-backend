@@ -22,7 +22,8 @@ public class MainVerticle extends AbstractVerticle {
 
         accountingDbVerticleDeployment.future().compose(id -> {
             Promise<String> httpVerticleDeployment = Promise.promise();
-            vertx.deployVerticle(new HttpServerVerticle(), httpVerticleDeployment);
+            vertx.deployVerticle(new HttpServerVerticle(),
+                    new DeploymentOptions().setConfig(config()), httpVerticleDeployment);
 
             return httpVerticleDeployment.future();
         }).onComplete(asyncResult -> {
