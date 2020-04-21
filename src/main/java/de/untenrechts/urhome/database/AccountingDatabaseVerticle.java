@@ -14,12 +14,14 @@ import static de.untenrechts.urhome.database.DatabaseConfig.*;
 @Slf4j
 public class AccountingDatabaseVerticle extends AbstractVerticle {
 
+    private JDBCClient jdbcClient;
+
     @Override
     public void start(Promise<Void> promise) {
         final DatabaseConfig config = getDatabaseConfig();
         log.debug("Loading database config has succeeded.");
 
-        final JDBCClient jdbcClient = JDBCClient.createShared(vertx, new JsonObject()
+        jdbcClient = JDBCClient.createShared(vertx, new JsonObject()
                 .put("url", config.getJdbcUrl())
                 .put("driver_class", config.getDriverClass())
                 .put("user", config.getUser())
@@ -35,6 +37,18 @@ public class AccountingDatabaseVerticle extends AbstractVerticle {
             } else {
                 promise.fail(asyncReady.cause());
             }
+        });
+    }
+
+    @Override
+    public void stop(Promise<Void> stopPromise) {
+        jdbcClient.close(v -> {
+            if (v.succeeded()) {
+                log.info("Successfully closed JDBC Client.");
+            } else {
+                log.error("Failed closing JDBC Client.", v.cause());
+            }
+            stopPromise.handle(v);
         });
     }
 
