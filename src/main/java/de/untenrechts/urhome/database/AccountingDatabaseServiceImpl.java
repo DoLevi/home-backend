@@ -242,6 +242,10 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
         if (userId != null) {
             final JsonArray queryParams = new JsonArray()
                     .add(userId)
+                    .add(userId)
+                    .add(userId)
+                    .add(userId)
+                    .add(userId)
                     .add(start)
                     .add(end);
             log.debug("Fetching purchases for user, id {}, start {}, end {}...", userId, start, end);
