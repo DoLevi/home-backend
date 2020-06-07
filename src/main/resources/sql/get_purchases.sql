@@ -10,13 +10,13 @@ FROM (
         p.id,
         p.date_bought,
         p.product_name,
+        p.buyer_user_id,
         m.user_id AS consumer_id,
         p.price,
         m.consumption_share,
         SUM(m.consumption_share) OVER (PARTITION BY p.id) AS share_sum,
         (RANK() OVER (PARTITION BY p.id ORDER BY (p.buyer_user_id = ?)::int + (m.user_id = ?)::int DESC)) = 1 AS is_relevant
     FROM purchases p
-    JOIN purchase_mapping m ON p.id = m.purchase_id
-    WHERE (p.buyer_user_id = ? OR m.user_id = ?) AND p.date_bought >= ? AND p.date_bought <= ?) s
-WHERE is_relevant
+    JOIN purchase_mapping m ON p.id = m.purchase_id) s
+WHERE is_relevant AND (s.buyer_user_id = ? OR s.consumer_id = ?) AND s.date_bought >= ? AND s.date_bought <= ?
 ORDER BY s.date_bought DESC, s.id
