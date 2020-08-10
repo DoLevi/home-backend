@@ -2,8 +2,15 @@ SELECT
     s.id,
     s.date_bought,
     s.product_name,
-    CASE WHEN s.consumer_id = ? THEN s.price * s.consumption_share / s.share_sum
-         ELSE 0
+    CASE
+        -- verbose: (s.buyer_user_id <> ? OR s.consumer_id = ?) AND s.consumer_id = ?
+        -- meaning: ? is the consumer
+        WHEN s.consumer_id = ?
+            THEN s.price * s.consumption_share / s.share_sum
+        -- verbose: s.buyer_user_id = ? AND s.consumer_id <> ?
+        -- meaning: ? is not the consumer but the buyer
+        WHEN s.buyer_user_id = ?
+            THEN - s.price * s.consumption_share / s.share_sum
     END AS price
 FROM (
     SELECT

@@ -246,6 +246,7 @@ public class AccountingDatabaseServiceImpl implements AccountingDatabaseService 
                     .add(userId)
                     .add(userId)
                     .add(userId)
+                    .add(userId)
                     .add(start)
                     .add(end);
             log.debug("Fetching purchases for user, id {}, start {}, end {}...", userId, start, end);
