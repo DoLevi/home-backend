@@ -10,7 +10,7 @@ SELECT
         -- verbose: s.buyer_user_id = ? AND s.consumer_id <> ?
         -- meaning: ? is not the consumer but the buyer
         WHEN s.buyer_user_id = ?
-            THEN - s.price * s.consumption_share / s.share_sum
+            THEN 0
     END AS price
 FROM (
     SELECT
